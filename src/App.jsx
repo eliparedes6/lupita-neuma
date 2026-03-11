@@ -1,92 +1,95 @@
 import { useState, useRef, useEffect } from "react";
 
+const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
+
 const CLIENTS = [
   {
-    id: "labsalud",
-    name: "Laboratorios Salud+",
+    id: "pfizer",
+    name: "Pfizer México",
     industry: "Farmacéutica",
-    color: "#4ADE80",
-    initials: "LS",
-    vocero: "Dr. Alejandro Ríos, Director Médico",
-    productos: "Oncología, cardiología, diabetes",
-    tono: "Científico y cercano",
-    mensajes: [
-      "Innovación con evidencia clínica comprobada",
-      "Comprometidos con el acceso a la salud en México",
-      "30 años liderando tratamientos de vanguardia",
-    ],
-    mercado: "México y Latam",
-    regulacion: "COFEPRIS",
+    color: "#4A90D9",
+    initials: "PF",
+    folderId: "1Z0iOscR22coaCxWLHNlGFMFUb6GLES69",
   },
   {
-    id: "vitacare",
-    name: "VitaCare México",
-    industry: "Salud preventiva",
-    color: "#60A5FA",
-    initials: "VC",
-    vocero: "Dra. Mariana Torres, CEO",
-    productos: "Suplementos, vitaminas, bienestar",
-    tono: "Cercano, optimista y accesible",
-    mensajes: [
-      "La prevención es la mejor medicina",
-      "Ciencia al servicio del bienestar cotidiano",
-      "Productos certificados para toda la familia",
-    ],
-    mercado: "México",
-    regulacion: "COFEPRIS",
+    id: "prudence",
+    name: "Condones Prudence",
+    industry: "Salud Sexual",
+    color: "#D62B7C",
+    initials: "PR",
+    folderId: "1VJyRHA5VHyb9Ea6-kK9Iob0ZzQpsiWu0",
   },
   {
-    id: "medtech",
-    name: "MedTech Innovations",
-    industry: "Tecnología médica",
-    color: "#F472B6",
-    initials: "MT",
-    vocero: "Ing. Carlos Mendoza, Dir. Comercial",
-    productos: "Dispositivos médicos, diagnóstico, IA médica",
-    tono: "Innovador, técnico pero accesible",
-    mensajes: [
-      "Tecnología que salva vidas",
-      "IA al servicio del diagnóstico temprano",
-      "Socios estratégicos de hospitales líderes",
-    ],
-    mercado: "México, Colombia, Chile",
-    regulacion: "COFEPRIS / FDA",
+    id: "soriana",
+    name: "Organización Soriana",
+    industry: "Retail",
+    color: "#C8102E",
+    initials: "SO",
+    folderId: "1ExtUJGposXvT0tXZTyyWg_jfkRejQw2e",
   },
 ];
 
 const ACTIONS = [
   { id: "comunicado", icon: "📋", label: "Comunicado de prensa", color: "#4ADE80",
-    prompt: (c) => `Soy del equipo de la agencia. Necesito redactar un comunicado de prensa para ${c.name}. ¿Qué información adicional necesitas para generarlo?` },
+    prompt: (c) => `Necesito redactar un comunicado de prensa para ${c.name}. Con base en los archivos que tienes del cliente, ¿qué información adicional necesitas para generarlo?` },
   { id: "pitch", icon: "🎯", label: "Pitch para periodista", color: "#60A5FA",
-    prompt: (c) => `Necesito un pitch para un periodista sobre ${c.name}. ¿Qué datos necesitas para personalizarlo?` },
+    prompt: (c) => `Necesito un pitch para un periodista sobre ${c.name}. Usa el contexto que tienes del cliente para personalizarlo.` },
   { id: "posts", icon: "📱", label: "Posts redes sociales", color: "#F472B6",
-    prompt: (c) => `Quiero crear posts para redes sociales de ${c.name}. ¿Por dónde empezamos?` },
+    prompt: (c) => `Quiero crear posts para redes sociales de ${c.name}. Usa el tono y mensajes clave del cliente.` },
   { id: "talking", icon: "🎤", label: "Talking points vocero", color: "#FBBF24",
-    prompt: (c) => `Necesito preparar talking points para ${c.vocero} de ${c.name}. ¿Qué información necesitas?` },
+    prompt: (c) => `Necesito preparar talking points para el vocero de ${c.name}. Usa el contexto del cliente para personalizar.` },
   { id: "crisis", icon: "⚠️", label: "Crisis statement", color: "#FB923C",
     prompt: (c) => `Necesito un crisis statement para ${c.name}. ¿Cuáles son los detalles de la situación?` },
 ];
 
-const SYSTEM_PROMPT = (client) => `Eres Lupita, agente especializada en Relaciones Públicas para el sector Salud y Farmacéutico. Formas parte del equipo interno de Neuma, una agencia de RRPP profesional.
+async function fetchDriveFiles(folderId) {
+  const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&fields=files(id,name,mimeType)&key=${GOOGLE_API_KEY}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  return data.files || [];
+}
+
+async function fetchDocContent(file) {
+  if (file.mimeType === "application/vnd.google-apps.document") {
+    const url = `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/plain&key=${GOOGLE_API_KEY}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.text();
+  }
+  return null;
+}
+
+async function loadClientContext(folderId) {
+  const files = await fetchDriveFiles(folderId);
+  const results = [];
+  for (const file of files) {
+    const content = await fetchDocContent(file);
+    if (content) {
+      results.push({ name: file.name, content: content.slice(0, 8000) });
+    }
+  }
+  return results;
+}
+
+function buildSystemPrompt(client, driveFiles) {
+  const fileSection = driveFiles.length > 0
+    ? `\n\nARCHIVOS DEL CLIENTE EN DRIVE:\n` + driveFiles.map(f => `\n--- ${f.name} ---\n${f.content}`).join("\n")
+    : "\n\n(No se encontraron archivos en Drive para este cliente aún.)";
+
+  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma. Tienes acceso completo al historial y contexto del siguiente cliente.
 
 CLIENTE ACTIVO: ${client.name}
 Industria: ${client.industry}
-Vocero principal: ${client.vocero}
-Productos/servicios: ${client.productos}
-Tono de comunicación: ${client.tono}
-Mensajes clave:
-${client.mensajes.map((m, i) => `  ${i + 1}. ${m}`).join("\n")}
-Mercado: ${client.mercado}
-Regulación aplicable: ${client.regulacion}
+${fileSection}
 
 INSTRUCCIONES:
 - Siempre escribes en español
-- Conoces a fondo a este cliente, usa sus mensajes clave en todo lo que generes
-- Si necesitas más datos para generar contenido, pregunta primero
+- Usas la información de los archivos de Drive como base para todo el contenido que generes
+- Si los archivos contienen comunicados, pitches o campañas anteriores, los usas como referencia de estilo y tono
+- Si necesitas información que no está en los archivos, pregunta al equipo
 - Nunca inventas información del cliente
-- Respetas las reglas de COFEPRIS: no haces claims terapéuticos sin indicar aprobación regulatoria
-- Incluyes "Consulte a su médico" cuando aplica
-- Ofreces versión conservadora y versión más directa cuando el tono lo permite
+- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica
+- Incluyes "Consulte a su médico" en comunicaciones B2C de salud cuando aplica
 - Al final de cada entrega sugieres qué más podría necesitar el equipo
 
 PUEDES GENERAR:
@@ -95,6 +98,7 @@ PUEDES GENERAR:
 3. Posts para redes sociales (adaptados por plataforma)
 4. Talking points para voceros (con preguntas difíciles y bridging phrases)
 5. Crisis statements (mensajes de contención, protocolo de respuesta)`;
+}
 
 function TypingDots() {
   return (
@@ -142,19 +146,44 @@ export default function LupitaApp() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingDrive, setLoadingDrive] = useState(false);
+  const [driveFiles, setDriveFiles] = useState([]);
+  const [driveStatus, setDriveStatus] = useState("");
   const [copied, setCopied] = useState(false);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
+  const systemPromptRef = useRef("");
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
-  const startChat = (client) => {
+  const startChat = async (client) => {
     setActiveClient(client);
+    setScreen("chat");
+    setLoadingDrive(true);
+    setDriveStatus("Leyendo archivos de Drive...");
+    setMessages([]);
+
+    let files = [];
+    try {
+      files = await loadClientContext(client.folderId);
+      setDriveFiles(files);
+      setDriveStatus(files.length > 0
+        ? `${files.length} archivo${files.length > 1 ? "s" : ""} cargado${files.length > 1 ? "s" : ""} de Drive`
+        : "No se encontraron archivos en Drive");
+    } catch {
+      setDriveStatus("Error al leer Drive — usando contexto básico");
+    }
+
+    systemPromptRef.current = buildSystemPrompt(client, files);
+    setLoadingDrive(false);
+
+    const fileNames = files.map(f => `· ${f.name}`).join("\n");
     setMessages([{
       role: "assistant",
-      content: `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.\n\n¿Qué necesitas hoy? Puedo generar un comunicado de prensa, pitch para periodista, posts para redes, talking points para ${client.vocero.split(",")[0]}, o un crisis statement.`
+      content: files.length > 0
+        ? `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.\n\nHe leído **${files.length} archivo${files.length > 1 ? "s" : ""}** de Drive:\n${fileNames}\n\n¿Qué necesitas generar hoy?`
+        : `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.\n\nNo encontré archivos en Drive todavía. Sube documentos a la carpeta del cliente y los leeré automáticamente.\n\n¿Qué necesitas generar?`
     }]);
-    setScreen("chat");
   };
 
   const sendMessage = async (text) => {
@@ -175,8 +204,8 @@ export default function LupitaApp() {
         },
         body: JSON.stringify({
           model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: SYSTEM_PROMPT(activeClient),
+          max_tokens: 1500,
+          system: systemPromptRef.current,
           messages: newMsgs.map(m => ({ role: m.role, content: m.content })),
         }),
       });
@@ -195,6 +224,21 @@ export default function LupitaApp() {
     if (last) { navigator.clipboard.writeText(last.content); setCopied(true); setTimeout(() => setCopied(false), 2000); }
   };
 
+  const refreshDrive = async () => {
+    if (!activeClient) return;
+    setLoadingDrive(true);
+    setDriveStatus("Actualizando archivos...");
+    try {
+      const files = await loadClientContext(activeClient.folderId);
+      setDriveFiles(files);
+      systemPromptRef.current = buildSystemPrompt(activeClient, files);
+      setDriveStatus(`${files.length} archivo${files.length > 1 ? "s" : ""} cargado${files.length > 1 ? "s" : ""} de Drive`);
+    } catch {
+      setDriveStatus("Error al actualizar Drive");
+    }
+    setLoadingDrive(false);
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: "#07090C", fontFamily: "'Georgia', serif", color: "#E2E8F0" }}>
       <style>{`
@@ -202,15 +246,17 @@ export default function LupitaApp() {
         @keyframes lupBounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-5px)} }
         @keyframes lupPulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
         @keyframes lupIn { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:none} }
+        @keyframes lupSpin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
         textarea { resize:none; }
         textarea:focus { outline:none; }
         ::-webkit-scrollbar{width:3px} ::-webkit-scrollbar-thumb{background:#1a2a1a;border-radius:3px}
       `}</style>
 
+      {/* HEADER */}
       <div style={{ padding: "14px 24px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(0,0,0,0.4)", backdropFilter: "blur(12px)", position: "sticky", top: 0, zIndex: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
           {screen === "chat" && (
-            <button onClick={() => { setScreen("home"); setMessages([]); setActiveClient(null); }} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8, padding: "5px 10px", color: "#888", fontSize: 12, cursor: "pointer", marginRight: 4 }}>← Clientes</button>
+            <button onClick={() => { setScreen("home"); setMessages([]); setActiveClient(null); setDriveFiles([]); }} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8, padding: "5px 10px", color: "#888", fontSize: 12, cursor: "pointer", marginRight: 4 }}>← Clientes</button>
           )}
           <div style={{ width: 34, height: 34, borderRadius: 9, background: "linear-gradient(135deg, #052e16, #16A34A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>✦</div>
           <div>
@@ -219,31 +265,48 @@ export default function LupitaApp() {
             </div>
             <div style={{ fontSize: 10, color: "#4ADE80", display: "flex", alignItems: "center", gap: 5 }}>
               <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#4ADE80", display: "inline-block", animation: "lupPulse 2s infinite" }} />
-              Neuma · Agente RRPP Salud
+              Neuma · Agente RRPP + Google Drive
             </div>
           </div>
         </div>
         {screen === "chat" && (
-          <div style={{ display: "flex", gap: 7 }}>
+          <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
+            {driveStatus && (
+              <span style={{ fontSize: 10, color: loadingDrive ? "#FBBF24" : "#4ADE80", display: "flex", alignItems: "center", gap: 5 }}>
+                {loadingDrive
+                  ? <span style={{ display: "inline-block", width: 8, height: 8, border: "1.5px solid #FBBF24", borderTopColor: "transparent", borderRadius: "50%", animation: "lupSpin 0.7s linear infinite" }} />
+                  : <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />
+                }
+                {driveStatus}
+              </span>
+            )}
+            <button onClick={refreshDrive} disabled={loadingDrive} style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.15)", color: "#4ADE80", borderRadius: 8, padding: "5px 11px", fontSize: 11, cursor: "pointer" }}>
+              ↻ Drive
+            </button>
             <button onClick={copyLast} style={{ background: "rgba(74,222,128,0.07)", border: "1px solid rgba(74,222,128,0.18)", color: "#4ADE80", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>
               {copied ? "✓ Copiado" : "📋 Copiar"}
             </button>
-            <button onClick={() => setMessages([{ role: "assistant", content: `¡Listo para seguir con **${activeClient.name}**! ¿Qué necesitas ahora?` }])} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", color: "#666", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>
-              Nueva conversación
+            <button onClick={() => setMessages([{ role: "assistant", content: `¡Listo para seguir con **${activeClient.name}**! Tengo ${driveFiles.length} archivo${driveFiles.length !== 1 ? "s" : ""} de Drive cargados. ¿Qué necesitas ahora?` }])} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", color: "#666", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>
+              Nueva conv.
             </button>
           </div>
         )}
       </div>
 
+      {/* HOME */}
       {screen === "home" && (
         <div style={{ maxWidth: 680, margin: "0 auto", padding: "44px 20px", animation: "lupIn 0.4s ease" }}>
           <p style={{ fontSize: 10, letterSpacing: "0.3em", color: "#1a3a1a", textTransform: "uppercase", marginBottom: 10 }}>Neuma · Agencia de RRPP</p>
           <h1 style={{ fontSize: "clamp(26px, 4vw, 38px)", fontWeight: 400, margin: "0 0 8px", letterSpacing: "-0.02em", lineHeight: 1.1 }}>
             Hola, ¿con qué cliente<br /><em style={{ color: "#4ADE80" }}>trabajamos hoy?</em>
           </h1>
-          <p style={{ color: "#374151", fontSize: 13, margin: "0 0 40px", lineHeight: 1.7 }}>
-            Selecciona el cliente y Lupita tendrá listo su contexto, mensajes clave y tono de comunicación.
+          <p style={{ color: "#374151", fontSize: 13, margin: "0 0 8px", lineHeight: 1.7 }}>
+            Selecciona el cliente y Lupita leerá automáticamente todos sus archivos de Google Drive.
           </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 32, fontSize: 11, color: "#1a4a1a" }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />
+            Conectada a Google Drive · {CLIENTS.length} clientes activos
+          </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 40 }}>
             {CLIENTS.map((client, i) => (
               <button key={client.id} onClick={() => startChat(client)} style={{
@@ -252,7 +315,7 @@ export default function LupitaApp() {
                 display: "flex", alignItems: "center", gap: 16, transition: "all 0.2s",
                 animation: `lupIn 0.4s ease ${i * 0.07}s both`,
               }}
-                onMouseEnter={e => { e.currentTarget.style.background = "rgba(74,222,128,0.05)"; e.currentTarget.style.borderColor = "rgba(74,222,128,0.2)"; e.currentTarget.style.transform = "translateX(4px)"; }}
+                onMouseEnter={e => { e.currentTarget.style.background = `${client.color}10`; e.currentTarget.style.borderColor = `${client.color}40`; e.currentTarget.style.transform = "translateX(4px)"; }}
                 onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.02)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)"; e.currentTarget.style.transform = "none"; }}
               >
                 <div style={{ width: 44, height: 44, borderRadius: 12, background: client.color + "18", border: `1.5px solid ${client.color}33`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, color: client.color, flexShrink: 0 }}>
@@ -260,11 +323,11 @@ export default function LupitaApp() {
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 15, fontWeight: 600, color: "#E2E8F0", marginBottom: 2 }}>{client.name}</div>
-                  <div style={{ fontSize: 12, color: "#4B5563" }}>{client.industry} · {client.mercado}</div>
+                  <div style={{ fontSize: 12, color: "#4B5563" }}>{client.industry}</div>
                 </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 11, color: "#374151", marginBottom: 4 }}>Vocero</div>
-                  <div style={{ fontSize: 12, color: "#6B7280" }}>{client.vocero.split(",")[0]}</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "#2a4a2a" }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block", opacity: 0.6 }} />
+                  Drive conectado
                 </div>
                 <span style={{ color: "#2D3748", fontSize: 16, marginLeft: 4 }}>→</span>
               </button>
@@ -274,21 +337,33 @@ export default function LupitaApp() {
             <div style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, color: "#2D3748", flexShrink: 0 }}>+</div>
             <div>
               <div style={{ fontSize: 13, color: "#374151", marginBottom: 2 }}>Agregar nuevo cliente</div>
-              <div style={{ fontSize: 11, color: "#1F2937" }}>Edita el archivo App.jsx para agregar más clientes</div>
+              <div style={{ fontSize: 11, color: "#1F2937" }}>Edita App.jsx · agrega nombre, color e ID de carpeta de Drive</div>
             </div>
           </div>
         </div>
       )}
 
+      {/* CHAT */}
       {screen === "chat" && (
         <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 16px", display: "flex", flexDirection: "column", height: "calc(100vh - 64px)" }}>
-          <div style={{ padding: "10px 0 6px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {activeClient.mensajes.map((m, i) => (
-              <span key={i} style={{ fontSize: 10, padding: "3px 9px", background: activeClient.color + "0F", border: `1px solid ${activeClient.color}22`, borderRadius: 20, color: activeClient.color }}>
-                {m}
-              </span>
-            ))}
-          </div>
+          {driveFiles.length > 0 && (
+            <div style={{ padding: "8px 0 6px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontSize: 10, color: "#2a4a2a", marginRight: 2 }}>📂</span>
+              {driveFiles.map((f, i) => (
+                <span key={i} style={{ fontSize: 10, padding: "2px 8px", background: activeClient.color + "0F", border: `1px solid ${activeClient.color}22`, borderRadius: 20, color: activeClient.color }}>
+                  {f.name}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {loadingDrive && messages.length === 0 && (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, flexDirection: "column", gap: 12 }}>
+              <div style={{ width: 32, height: 32, border: "2px solid #4ADE80", borderTopColor: "transparent", borderRadius: "50%", animation: "lupSpin 0.8s linear infinite" }} />
+              <div style={{ fontSize: 13, color: "#2a4a2a" }}>Leyendo archivos de Drive...</div>
+            </div>
+          )}
+
           <div style={{ flex: 1, overflowY: "auto", padding: "20px 0 10px" }}>
             {messages.map((msg, i) => <MessageBubble key={i} msg={msg} />)}
             {loading && (
@@ -299,6 +374,7 @@ export default function LupitaApp() {
             )}
             <div ref={bottomRef} />
           </div>
+
           {!loading && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", paddingBottom: 8 }}>
               {ACTIONS.map(a => (
@@ -315,6 +391,7 @@ export default function LupitaApp() {
               ))}
             </div>
           )}
+
           <div style={{ paddingBottom: 20 }}>
             <div style={{ display: "flex", gap: 9, alignItems: "flex-end", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 15, padding: "11px 13px", transition: "border-color 0.2s" }}
               onFocusCapture={e => e.currentTarget.style.borderColor = "rgba(74,222,128,0.3)"}
