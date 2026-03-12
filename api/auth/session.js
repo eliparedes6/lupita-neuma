@@ -1,7 +1,6 @@
 // api/auth/session.js
-// Vercel Function — verifica sesión y devuelve usuario + permisos
-
-import { USERS } from "../../src/users.js";
+// Vercel Function — verifica sesión
+// Cualquier cuenta @neuma.mx tiene acceso total automáticamente
 
 export default async function handler(req, res) {
   const cookie = req.headers.cookie || "";
@@ -20,10 +19,8 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: "session_expired" });
     }
 
-    // Buscar permisos del usuario
-    const userConfig = USERS[sessionData.email.toLowerCase()];
-
-    if (!userConfig) {
+    // Verificar dominio @neuma.mx — acceso total automático
+    if (!sessionData.email || !sessionData.email.endsWith("@neuma.mx")) {
       return res.status(403).json({ error: "user_not_authorized" });
     }
 
@@ -31,9 +28,10 @@ export default async function handler(req, res) {
       email: sessionData.email,
       name: sessionData.name,
       picture: sessionData.picture,
-      role: userConfig.role,
-      clients: userConfig.clients, // ["pfizer", "soriana"] o ["*"] para todos
+      role: "directora",
+      clients: ["*"],
     });
+
   } catch {
     return res.status(401).json({ error: "invalid_session" });
   }
