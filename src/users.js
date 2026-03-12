@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────
 //
 // Para agregar un usuario:
-//   "correo@neumaagencia.com": { role: "account", clients: ["pfizer"] }
+//   "correo@neuma.mx": { role: "account", clients: ["pfizer"] }
 //
 // Para dar acceso a todos los clientes:
 //   clients: ["*"]
@@ -12,7 +12,6 @@
 // Roles disponibles:
 //   "directora"  → ve todo, sin restricciones
 //   "account"    → solo ve sus clientes asignados
-//   "junior"     → solo ve sus clientes asignados (sin reporte matutino)
 //
 // Para revocar acceso: elimina o comenta la línea del usuario
 // ─────────────────────────────────────────────────────────
@@ -20,37 +19,35 @@
 export const USERS = {
 
   // ── DIRECCIÓN ──────────────────────────────────────────
-  "direccion@neumaagencia.com": {
+  "victor.paredes@neuma.mx": {
     role: "directora",
-    name: "Directora",
-    clients: ["*"], // acceso total
+    name: "Victor Paredes",
+    clients: ["*"],
+  },
+
+    "eliparedes@neuma.mx": {
+    role: "directora",
+    name: "Eli Paredes",
+    clients: ["*"],
   },
 
   // ── ACCOUNTS ───────────────────────────────────────────
-  "ana.lopez@neumaagencia.com": {
+  "anapaola@neuma.mx": {
     role: "account",
-    name: "Ana López",
-    clients: ["pfizer", "prudence"],
+    name: "Ana Paola",
+    clients: ["soriana"],
   },
 
-  "pedro.martinez@neumaagencia.com": {
+  "fernando@neuma.mx": {
     role: "account",
-    name: "Pedro Martínez",
-    clients: ["soriana", "pfizer"],
+    name: "Fernando",
+    clients: ["pfizer"],
   },
 
-  // ── EJEMPLO: account con un solo cliente ───────────────
-  // "maria.garcia@neumaagencia.com": {
-  //   role: "account",
-  //   name: "María García",
-  //   clients: ["soriana"],
-  // },
-
-  // ── EJEMPLO: junior sin reporte matutino ───────────────
-  // "junior@neumaagencia.com": {
-  //   role: "junior",
-  //   name: "Junior",
-  //   clients: ["prudence"],
-  // },
+  "silvia@neuma.mx": {
+    role: "account",
+    name: "Silvia",
+    clients: ["prudence"],
+  },
 
 };
