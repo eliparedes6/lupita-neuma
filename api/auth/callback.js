@@ -36,7 +36,7 @@ export default async function handler(req, res) {
     const user = await userRes.json();
 
     // Verificar dominio
-    if (!user.email || !user.email.endsWith("@neumaagencia.com")) {
+    if (!user.email || !user.email.endsWith("@neuma.mx")) {
       return res.redirect("/?error=domain_not_allowed");
     }
 
