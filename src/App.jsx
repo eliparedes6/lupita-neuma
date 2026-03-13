@@ -2,11 +2,13 @@ import { useState, useRef, useEffect } from "react";
 
 const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
 const ALL_CLIENTS = [
-  { id: "pfizer", name: "Pfizer México", industry: "Farmacéutica", color: "#4A90D9", initials: "PF", folderId: "1Z0iOscR22coaCxWLHNlGFMFUb6GLES69" },
-  { id: "prudence", name: "Condones Prudence", industry: "Salud Sexual", color: "#D62B7C", initials: "PR", folderId: "1VJyRHA5VHyb9Ea6-kK9Iob0ZzQpsiWu0" },
-  { id: "soriana", name: "Organización Soriana", industry: "Retail", color: "#C8102E", initials: "SO", folderId: "1ExtUJGposXvT0tXZTyyWg_jfkRejQw2e" },
+  { id: "pfizer", name: "Pfizer México", industry: "Farmacéutica", color: "#4A90D9", initials: "PF", folderId: "1Z0iOscR22coaCxWLHNlGFMFUb6GLES69", searchQuery: "Pfizer México farmacéutica salud noticias" },
+  { id: "prudence", name: "Condones Prudence", industry: "Salud Sexual", color: "#D62B7C", initials: "PR", folderId: "1VJyRHA5VHyb9Ea6-kK9Iob0ZzQpsiWu0", searchQuery: "salud sexual México condones planificación familiar noticias" },
+  { id: "soriana", name: "Organización Soriana", industry: "Retail", color: "#C8102E", initials: "SO", folderId: "1ExtUJGposXvT0tXZTyyWg_jfkRejQw2e", searchQuery: "Soriana retail supermercados México noticias" },
 ];
 
 const ACTIONS = [
@@ -27,6 +29,102 @@ const MOCK_REPORT = {
     { id: "prudence", name: "Condones Prudence", color: "#D62B7C", initials: "PR", alerta: false, sentimiento: "neutro", menciones: 5, mencionesAyer: 3, prensa: [], redes: [{ plataforma: "Instagram", menciones: 18, sentimiento: "positivo", topPost: "Post de campaña de educación sexual alcanza 2.3k likes" }, { plataforma: "TikTok", menciones: 11, sentimiento: "positivo", topPost: "Video educativo sobre prevención de ITS supera 15k views" }], resumenLupita: "Día tranquilo. El contenido de redes sociales está funcionando bien. Sin menciones en prensa. Buen momento para enviar un pitch proactivo." },
   ],
 };
+
+// ── GEMINI: busca noticias y tendencias recientes del sector ─────────────────
+async function searchGemini(query) {
+  if (!GEMINI_API_KEY) return null;
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `Eres un asistente de investigación para una agencia de relaciones públicas en México.
+
+Busca y resume las noticias y tendencias más recientes (últimas 2 semanas) sobre: ${query}
+
+Responde en español con este formato exacto:
+TENDENCIAS DEL SECTOR:
+[3-5 tendencias o noticias relevantes, una por línea, comenzando con •]
+
+OPORTUNIDADES DE PR:
+[2-3 oportunidades concretas de relaciones públicas basadas en estas tendencias, una por línea, comenzando con →]
+
+Sé específico y conciso. Máximo 300 palabras en total.`
+            }]
+          }],
+          generationConfig: { maxOutputTokens: 500, temperature: 0.3 }
+        })
+      }
+    );
+    const data = await res.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+  } catch (e) {
+    console.error("Gemini error:", e);
+    return null;
+  }
+}
+
+
+// ── GEMINI: busca noticias recientes del sector ──────────────────────────────
+async function searchGeminiNews(client) {
+  if (!GEMINI_API_KEY) return null;
+  try {
+    const prompt = `Busca las noticias más recientes y relevantes de los últimos 7 días sobre: "${client.searchQuery}".
+
+Devuelve exactamente este formato JSON (sin markdown, sin explicaciones):
+{
+  "noticias": [
+    { "titulo": "...", "resumen": "...", "relevancia_pr": "..." }
+  ],
+  "tendencias": ["tendencia 1", "tendencia 2", "tendencia 3"],
+  "oportunidades_pr": ["oportunidad 1", "oportunidad 2"]
+}
+
+Máximo 4 noticias. Enfocado en México.`;
+
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          tools: [{ google_search: {} }],
+          generationConfig: { temperature: 0.3, maxOutputTokens: 1000 }
+        })
+      }
+    );
+    const data = await res.json();
+    const text = data.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || "";
+    const clean = text.replace(/```json|```/g, "").trim();
+    return JSON.parse(clean);
+  } catch (e) {
+    console.warn("Gemini search failed:", e);
+    return null;
+  }
+}
+
+function formatGeminiContext(geminiData) {
+  if (!geminiData) return "";
+  let ctx = "\n\nNOTICIAS RECIENTES DEL SECTOR (últimos 7 días · fuente: Gemini):\n";
+  if (geminiData.noticias?.length > 0) {
+    geminiData.noticias.forEach((n, i) => {
+      ctx += `\n${i + 1}. ${n.titulo}\n   Resumen: ${n.resumen}\n   Relevancia PR: ${n.relevancia_pr}\n`;
+    });
+  }
+  if (geminiData.tendencias?.length > 0) {
+    ctx += `\nTENDENCIAS DETECTADAS:\n${geminiData.tendencias.map(t => `· ${t}`).join("\n")}\n`;
+  }
+  if (geminiData.oportunidades_pr?.length > 0) {
+    ctx += `\nOPORTUNIDADES DE PR IDENTIFICADAS:\n${geminiData.oportunidades_pr.map(o => `· ${o}`).join("\n")}\n`;
+  }
+  return ctx;
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 function LoginScreen({ error }) {
   const handleLogin = () => {
@@ -112,11 +210,17 @@ async function loadClientContext(folderId) {
   return results;
 }
 
-function buildSystemPrompt(client, driveFiles) {
+// ── buildSystemPrompt ahora incluye capa de noticias de Gemini ───────────────
+function buildSystemPrompt(client, driveFiles, newsContext = null) {
   const fileSection = driveFiles.length > 0
     ? `\n\nARCHIVOS DEL CLIENTE EN DRIVE:\n` + driveFiles.map(f => `\n--- ${f.name} ---\n${f.content}`).join("\n")
     : "\n\n(No se encontraron archivos en Drive para este cliente aún.)";
-  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma.\n\nCLIENTE ACTIVO: ${client.name}\nIndustria: ${client.industry}\n${fileSection}\n\nINSTRUCCIONES:\n- Siempre escribes en español\n- Usas la información de los archivos de Drive como base para todo el contenido\n- Si necesitas información que no está en los archivos, pregunta al equipo\n- Nunca inventas información del cliente\n- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica\n- Al final de cada entrega sugieres qué más podría necesitar el equipo`;
+
+  const newsSection = newsContext
+    ? `\n\nCONTEXTO DE NOTICIAS Y TENDENCIAS DEL SECTOR (actualizado hoy):\n${newsContext}`
+    : "";
+
+  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma.\n\nCLIENTE ACTIVO: ${client.name}\nIndustria: ${client.industry}\n${fileSection}${newsSection}\n\nINSTRUCCIONES:\n- Siempre escribes en español\n- Usas la información de los archivos de Drive como base para todo el contenido\n- Cuando generes pitches o comunicados, usa las tendencias del sector para hacer el contenido más relevante y oportuno\n- Si hay oportunidades de PR detectadas en las noticias, menciónaselas al equipo de forma proactiva\n- Si necesitas información que no está en los archivos, pregunta al equipo\n- Nunca inventas información del cliente\n- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica\n- Al final de cada entrega sugieres qué más podría necesitar el equipo`;
 }
 
 function TypingDots() {
@@ -243,6 +347,7 @@ export default function LupitaApp() {
   const [loadingDrive, setLoadingDrive] = useState(false);
   const [driveFiles, setDriveFiles] = useState([]);
   const [driveStatus, setDriveStatus] = useState("");
+  const [newsContext, setNewsContext] = useState(null);
   const [copied, setCopied] = useState(false);
   const [urlError, setUrlError] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -296,19 +401,40 @@ export default function LupitaApp() {
     if (client) startChat(client);
   };
 
+  // ── startChat carga Drive + Gemini en paralelo ────────────────────────────
   const startChat = async (client) => {
     setActiveClient(client); setScreen("chat"); setLoadingDrive(true);
-    setDriveStatus("Leyendo archivos de Drive..."); setMessages([]);
+    setDriveStatus("Cargando Drive y noticias del sector..."); setMessages([]);
+    setNewsContext(null);
+
     let files = [];
+    let news = null;
+
     try {
-      files = await loadClientContext(client.folderId);
+      [files, news] = await Promise.all([
+        loadClientContext(client.folderId),
+        searchGemini(client.searchQuery)
+      ]);
       setDriveFiles(files);
-      setDriveStatus(files.length > 0 ? `${files.length} archivo${files.length > 1 ? "s" : ""} cargado${files.length > 1 ? "s" : ""} de Drive` : "No se encontraron archivos en Drive");
-    } catch { setDriveStatus("Error al leer Drive"); }
-    systemPromptRef.current = buildSystemPrompt(client, files);
+      setNewsContext(news);
+      setDriveStatus(files.length > 0
+        ? `${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Noticias actualizadas" : "sin noticias"}`
+        : `Sin archivos en Drive · ${news ? "🌐 Noticias cargadas" : ""}`
+      );
+    } catch {
+      setDriveStatus("Error al cargar contexto");
+    }
+
+    systemPromptRef.current = buildSystemPrompt(client, files, news);
     setLoadingDrive(false);
+
     const fileNames = files.map(f => `· ${f.name}`).join("\n");
-    setMessages([{ role: "assistant", content: files.length > 0 ? `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.\n\nHe leído **${files.length} archivo${files.length > 1 ? "s" : ""}** de Drive:\n${fileNames}\n\n¿Qué necesitas generar hoy?` : `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.\n\n¿Qué necesitas generar?` }]);
+    const newsLine = news ? "\n\n🌐 **Noticias del sector cargadas** — tengo contexto de las tendencias más recientes." : "";
+
+    setMessages([{ role: "assistant", content: files.length > 0
+      ? `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.\n\nHe leído **${files.length} archivo${files.length > 1 ? "s" : ""}** de Drive:\n${fileNames}${newsLine}\n\n¿Qué necesitas generar hoy?`
+      : `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.${newsLine}\n\n¿Qué necesitas generar?`
+    }]);
   };
 
   const sendMessage = async (text) => {
@@ -334,13 +460,17 @@ export default function LupitaApp() {
 
   const refreshDrive = async () => {
     if (!activeClient) return;
-    setLoadingDrive(true); setDriveStatus("Actualizando archivos...");
+    setLoadingDrive(true); setDriveStatus("Actualizando...");
     try {
-      const files = await loadClientContext(activeClient.folderId);
+      const [files, news] = await Promise.all([
+        loadClientContext(activeClient.folderId),
+        searchGemini(activeClient.searchQuery)
+      ]);
       setDriveFiles(files);
-      systemPromptRef.current = buildSystemPrompt(activeClient, files);
-      setDriveStatus(`${files.length} archivo${files.length > 1 ? "s" : ""} cargado${files.length > 1 ? "s" : ""} de Drive`);
-    } catch { setDriveStatus("Error al actualizar Drive"); }
+      setNewsContext(news);
+      systemPromptRef.current = buildSystemPrompt(activeClient, files, news);
+      setDriveStatus(`${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Noticias actualizadas" : "sin noticias"}`);
+    } catch { setDriveStatus("Error al actualizar"); }
     setLoadingDrive(false);
   };
 
@@ -358,7 +488,7 @@ export default function LupitaApp() {
   if (authState === "unauthorized") return <UnauthorizedScreen user={currentUser} onLogout={handleLogout} />;
 
   const backLabel = screen === "chat" ? "← Clientes" : screen === "reporte" ? "← Inicio" : null;
-  const backAction = screen === "chat" ? () => { setScreen("home"); setMessages([]); setActiveClient(null); setDriveFiles([]); } : screen === "reporte" ? () => setScreen("home") : null;
+  const backAction = screen === "chat" ? () => { setScreen("home"); setMessages([]); setActiveClient(null); setDriveFiles([]); setGeminiData(null); setNewsContext(null); } : screen === "reporte" ? () => setScreen("home") : null;
 
   return (
     <div style={{ minHeight: "100vh", background: "#07090C", fontFamily: "'Georgia', serif", color: "#E2E8F0" }}>
@@ -394,6 +524,7 @@ export default function LupitaApp() {
         <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
           {screen === "chat" && (
             <>
+              {geminiStatus && <span style={{ fontSize: 10, color: geminiData ? "#60A5FA" : "#4B5563", display: "flex", alignItems: "center", gap: 4 }}><span>🌐</span>{geminiStatus}</span>}
               {driveStatus && <span style={{ fontSize: 10, color: loadingDrive ? "#FBBF24" : "#4ADE80", display: "flex", alignItems: "center", gap: 5 }}>{loadingDrive ? <span style={{ display: "inline-block", width: 8, height: 8, border: "1.5px solid #FBBF24", borderTopColor: "transparent", borderRadius: "50%", animation: "lupSpin 0.7s linear infinite" }} /> : <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />}{driveStatus}</span>}
               <button onClick={refreshDrive} disabled={loadingDrive} style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.15)", color: "#4ADE80", borderRadius: 8, padding: "5px 11px", fontSize: 11, cursor: "pointer" }}>↻ Drive</button>
               <button onClick={copyLast} style={{ background: "rgba(74,222,128,0.07)", border: "1px solid rgba(74,222,128,0.18)", color: "#4ADE80", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>{copied ? "✓ Copiado" : "📋 Copiar"}</button>
@@ -406,7 +537,6 @@ export default function LupitaApp() {
               📊 Reporte de hoy
             </button>
           )}
-          {/* Avatar menu */}
           <div style={{ position: "relative" }}>
             <div onClick={() => setShowUserMenu(!showUserMenu)} style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(74,222,128,0.12)", border: "1.5px solid rgba(74,222,128,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#4ADE80", cursor: "pointer", fontWeight: 700, userSelect: "none" }}>
               {(currentUser?.name || currentUser?.email || "?")[0].toUpperCase()}
@@ -434,10 +564,10 @@ export default function LupitaApp() {
           <h1 style={{ fontSize: "clamp(26px, 4vw, 38px)", fontWeight: 400, margin: "0 0 8px", letterSpacing: "-0.02em", lineHeight: 1.1 }}>
             Hola, {currentUser?.name?.split(" ")[0]}<br /><em style={{ color: "#4ADE80" }}>¿con qué cliente trabajamos?</em>
           </h1>
-          <p style={{ color: "#374151", fontSize: 13, margin: "0 0 8px", lineHeight: 1.7 }}>Selecciona el cliente y Lupita leerá automáticamente todos sus archivos de Google Drive.</p>
+          <p style={{ color: "#374151", fontSize: 13, margin: "0 0 8px", lineHeight: 1.7 }}>Selecciona el cliente y Lupita leerá automáticamente sus archivos de Drive y las noticias más recientes del sector.</p>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 32, fontSize: 11, color: "#1a4a1a" }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />
-            Conectada a Google Drive · {CLIENTS.length} cliente{CLIENTS.length !== 1 ? "s" : ""} asignado{CLIENTS.length !== 1 ? "s" : ""}
+            Conectada a Google Drive · Gemini · {CLIENTS.length} cliente{CLIENTS.length !== 1 ? "s" : ""} asignado{CLIENTS.length !== 1 ? "s" : ""}
           </div>
           {MOCK_REPORT.clientes.some(c => c.alerta && (currentUser?.clients?.includes("*") || currentUser?.clients?.includes(c.id))) && (
             <div onClick={() => setScreen("reporte")} style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 12, padding: "12px 16px", marginBottom: 20, cursor: "pointer", display: "flex", gap: 10, alignItems: "center" }}>
@@ -462,7 +592,7 @@ export default function LupitaApp() {
                 </div>
                 {MOCK_REPORT.clientes.find(c => c.id === client.id)?.alerta && <span style={{ fontSize: 10, color: "#FCA5A5", background: "rgba(239,68,68,0.1)", padding: "2px 8px", borderRadius: 20 }}>⚠ Alerta</span>}
                 <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "#2a4a2a" }}>
-                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block", opacity: 0.6 }} />Drive conectado
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block", opacity: 0.6 }} />Drive + Gemini
                 </div>
                 <span style={{ color: "#2D3748", fontSize: 16, marginLeft: 4 }}>→</span>
               </button>
@@ -482,16 +612,17 @@ export default function LupitaApp() {
       {/* CHAT */}
       {screen === "chat" && (
         <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 16px", display: "flex", flexDirection: "column", height: "calc(100vh - 64px)" }}>
-          {driveFiles.length > 0 && (
+          {(driveFiles.length > 0 || newsContext) && (
             <div style={{ padding: "8px 0 6px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
               <span style={{ fontSize: 10, color: "#2a4a2a", marginRight: 2 }}>📂</span>
               {driveFiles.map((f, i) => <span key={i} style={{ fontSize: 10, padding: "2px 8px", background: activeClient.color + "0F", border: `1px solid ${activeClient.color}22`, borderRadius: 20, color: activeClient.color }}>{f.name}</span>)}
+              {newsContext && <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: 20, color: "#818CF8" }}>🌐 Noticias del sector</span>}
             </div>
           )}
           {loadingDrive && messages.length === 0 && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, flexDirection: "column", gap: 12 }}>
               <div style={{ width: 32, height: 32, border: "2px solid #4ADE80", borderTopColor: "transparent", borderRadius: "50%", animation: "lupSpin 0.8s linear infinite" }} />
-              <div style={{ fontSize: 13, color: "#2a4a2a" }}>Leyendo archivos de Drive...</div>
+              <div style={{ fontSize: 13, color: "#2a4a2a" }}>Cargando Drive y noticias del sector...</div>
             </div>
           )}
           <div style={{ flex: 1, overflowY: "auto", padding: "20px 0 10px" }}>
