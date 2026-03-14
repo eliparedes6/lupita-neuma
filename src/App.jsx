@@ -29,7 +29,7 @@ const MOCK_REPORT = {
   ],
 };
 
-// ── GEMINI: busca noticias y tendencias recientes del sector ─────────────────
+// ── GEMINI: busca noticias recientes del sector ──────────────────────────────
 async function searchGemini(query) {
   if (!GEMINI_API_KEY) return null;
   try {
@@ -39,22 +39,7 @@ async function searchGemini(query) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: `Eres un asistente de investigación para una agencia de relaciones públicas en México.
-
-Busca y resume las noticias y tendencias más recientes (últimas 2 semanas) sobre: ${query}
-
-Responde en español con este formato exacto:
-TENDENCIAS DEL SECTOR:
-[3-5 tendencias o noticias relevantes, una por línea, comenzando con •]
-
-OPORTUNIDADES DE PR:
-[2-3 oportunidades concretas de relaciones públicas basadas en estas tendencias, una por línea, comenzando con →]
-
-Sé específico y conciso. Máximo 300 palabras en total.`
-            }]
-          }],
+          contents: [{ parts: [{ text: `Eres un asistente de investigación para una agencia de relaciones públicas en México.\n\nBusca y resume las noticias y tendencias más recientes (últimas 2 semanas) sobre: ${query}\n\nResponde en español con este formato exacto:\nTENDENCIAS DEL SECTOR:\n[3-5 tendencias o noticias relevantes, una por línea, comenzando con •]\n\nOPORTUNIDADES DE PR:\n[2-3 oportunidades concretas de relaciones públicas basadas en estas tendencias, una por línea, comenzando con →]\n\nSé específico y conciso. Máximo 300 palabras en total.` }] }],
           generationConfig: { maxOutputTokens: 500, temperature: 0.3 }
         })
       }
@@ -62,164 +47,20 @@ Sé específico y conciso. Máximo 300 palabras en total.`
     const data = await res.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
   } catch (e) {
-    console.error("Gemini error:", e);
+    console.warn("Gemini error:", e);
     return null;
   }
-}
-
-
-// ── GEMINI: busca noticias recientes del sector ──────────────────────────────
-async function searchGeminiNews(client) {
-  if (!GEMINI_API_KEY) return null;
-  try {
-    const prompt = `Busca las noticias más recientes y relevantes de los últimos 7 días sobre: "${client.searchQuery}".
-
-Devuelve exactamente este formato JSON (sin markdown, sin explicaciones):
-{
-  "noticias": [
-    { "titulo": "...", "resumen": "...", "relevancia_pr": "..." }
-  ],
-  "tendencias": ["tendencia 1", "tendencia 2", "tendencia 3"],
-  "oportunidades_pr": ["oportunidad 1", "oportunidad 2"]
-}
-
-Máximo 4 noticias. Enfocado en México.`;
-
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          tools: [{ google_search: {} }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 1000 }
-        })
-      }
-    );
-    const data = await res.json();
-    const text = data.candidates?.[0]?.content?.parts?.find(p => p.text)?.text || "";
-    const clean = text.replace(/```json|```/g, "").trim();
-    return JSON.parse(clean);
-  } catch (e) {
-    console.warn("Gemini search failed:", e);
-    return null;
-  }
-}
-
-function formatGeminiContext(geminiData) {
-  if (!geminiData) return "";
-  let ctx = "\n\nNOTICIAS RECIENTES DEL SECTOR (últimos 7 días · fuente: Gemini):\n";
-  if (geminiData.noticias?.length > 0) {
-    geminiData.noticias.forEach((n, i) => {
-      ctx += `\n${i + 1}. ${n.titulo}\n   Resumen: ${n.resumen}\n   Relevancia PR: ${n.relevancia_pr}\n`;
-    });
-  }
-  if (geminiData.tendencias?.length > 0) {
-    ctx += `\nTENDENCIAS DETECTADAS:\n${geminiData.tendencias.map(t => `· ${t}`).join("\n")}\n`;
-  }
-  if (geminiData.oportunidades_pr?.length > 0) {
-    ctx += `\nOPORTUNIDADES DE PR IDENTIFICADAS:\n${geminiData.oportunidades_pr.map(o => `· ${o}`).join("\n")}\n`;
-  }
-  return ctx;
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
-function LoginScreen({ error }) {
-  const handleLogin = () => {
-    const params = new URLSearchParams({
-      client_id: GOOGLE_CLIENT_ID,
-      redirect_uri: `${window.location.origin}/auth/callback`,
-      response_type: "code",
-      scope: "openid email profile",
-      hd: "neuma.mx",
-      access_type: "online",
-      prompt: "select_account",
-    });
-    window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
-  };
-
-  const errorMessages = {
-    domain_not_allowed: "Solo cuentas @neuma.mx pueden acceder.",
-    user_not_authorized: "Tu cuenta no tiene permisos asignados. Contacta a la directora.",
-    auth_failed: "Error de autenticación. Intenta de nuevo.",
-    session_expired: "Tu sesión expiró. Inicia sesión nuevamente.",
-  };
-
-  return (
-    <div style={{ minHeight: "100vh", background: "#07090C", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Georgia', serif", padding: 20 }}>
-      <style>{`@keyframes lupIn { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:none} } button:hover { opacity: 0.92; }`}</style>
-      <div style={{ maxWidth: 400, width: "100%", textAlign: "center", animation: "lupIn 0.4s ease" }}>
-        <div style={{ width: 64, height: 64, borderRadius: 18, background: "linear-gradient(135deg, #052e16, #16A34A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 24px" }}>✦</div>
-        <p style={{ fontSize: 10, letterSpacing: "0.3em", color: "#1a4a1a", textTransform: "uppercase", marginBottom: 8 }}>Neuma · Agencia de RRPP</p>
-        <h1 style={{ fontSize: 32, fontWeight: 400, margin: "0 0 8px", letterSpacing: "-0.02em", color: "#F0FDF4" }}>Bienvenida a <em style={{ color: "#4ADE80" }}>Lupita</em></h1>
-        <p style={{ color: "#374151", fontSize: 14, margin: "0 0 36px", lineHeight: 1.7 }}>Tu agente de IA para Relaciones Públicas.<br />Inicia sesión con tu cuenta de Neuma.</p>
-        {error && errorMessages[error] && (
-          <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 10, padding: "10px 16px", marginBottom: 20 }}>
-            <p style={{ color: "#FCA5A5", fontSize: 13, margin: 0 }}>⚠ {errorMessages[error]}</p>
-          </div>
-        )}
-        <button onClick={handleLogin} style={{ width: "100%", background: "#fff", border: "none", borderRadius: 12, padding: "14px 20px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, fontSize: 15, fontWeight: 600, color: "#1a1a1a", transition: "all 0.2s", boxShadow: "0 2px 16px rgba(74,222,128,0.1)" }}>
-          <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-          Iniciar sesión con Google
-        </button>
-        <p style={{ fontSize: 11, color: "#1a3a1a", marginTop: 20, lineHeight: 1.6 }}>Solo cuentas <strong style={{ color: "#2a5a2a" }}>@neuma.mx</strong> tienen acceso.</p>
-      </div>
-    </div>
-  );
-}
-
-function UnauthorizedScreen({ user, onLogout }) {
-  return (
-    <div style={{ minHeight: "100vh", background: "#07090C", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Georgia', serif", padding: 20 }}>
-      <div style={{ maxWidth: 400, width: "100%", textAlign: "center" }}>
-        <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
-        <h2 style={{ color: "#F0FDF4", fontWeight: 400, marginBottom: 8 }}>Acceso restringido</h2>
-        <p style={{ color: "#374151", fontSize: 14, marginBottom: 24 }}>Tu cuenta <strong style={{ color: "#6B7280" }}>{user?.email}</strong> no tiene permisos asignados.<br />Contacta a la directora para que te agregue al sistema.</p>
-        <button onClick={onLogout} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#9CA3AF", borderRadius: 10, padding: "10px 20px", cursor: "pointer", fontSize: 13 }}>Cerrar sesión</button>
-      </div>
-    </div>
-  );
-}
-
-async function fetchDriveFiles(folderId) {
-  const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&fields=files(id,name,mimeType)&key=${GOOGLE_API_KEY}`;
-  const res = await fetch(url);
-  const data = await res.json();
-  return data.files || [];
-}
-
-async function fetchDocContent(file) {
-  if (file.mimeType === "application/vnd.google-apps.document") {
-    const url = `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/plain&key=${GOOGLE_API_KEY}`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    return await res.text();
-  }
-  return null;
-}
-
-async function loadClientContext(folderId) {
-  const files = await fetchDriveFiles(folderId);
-  const results = [];
-  for (const file of files) {
-    const content = await fetchDocContent(file);
-    if (content) results.push({ name: file.name, content: content.slice(0, 8000) });
-  }
-  return results;
-}
-
-// ── buildSystemPrompt ahora incluye capa de noticias de Gemini ───────────────
-function buildSystemPrompt(client, driveFiles, newsContext = null) {
+function buildSystemPrompt(client, driveFiles, newsContext) {
   const fileSection = driveFiles.length > 0
     ? `\n\nARCHIVOS DEL CLIENTE EN DRIVE:\n` + driveFiles.map(f => `\n--- ${f.name} ---\n${f.content}`).join("\n")
     : "\n\n(No se encontraron archivos en Drive para este cliente aún.)";
-
   const newsSection = newsContext
     ? `\n\nCONTEXTO DE NOTICIAS Y TENDENCIAS DEL SECTOR (actualizado hoy):\n${newsContext}`
     : "";
-
-  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma.\n\nCLIENTE ACTIVO: ${client.name}\nIndustria: ${client.industry}\n${fileSection}${newsSection}\n\nINSTRUCCIONES:\n- Siempre escribes en español\n- Usas la información de los archivos de Drive como base para todo el contenido\n- Cuando generes pitches o comunicados, usa las tendencias del sector para hacer el contenido más relevante y oportuno\n- Si hay oportunidades de PR detectadas en las noticias, menciónaselas al equipo de forma proactiva\n- Si necesitas información que no está en los archivos, pregunta al equipo\n- Nunca inventas información del cliente\n- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica\n- Al final de cada entrega sugieres qué más podría necesitar el equipo`;
+  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma.\n\nCLIENTE ACTIVO: ${client.name}\nIndustria: ${client.industry}\n${fileSection}${newsSection}\n\nINSTRUCCIONES:\n- Siempre escribes en español\n- Usas la información de los archivos de Drive como base para todo el contenido\n- Cuando generes pitches o comunicados, usa las tendencias del sector para hacer el contenido más relevante\n- Si hay oportunidades de PR detectadas en las noticias, menciónaselas al equipo de forma proactiva\n- Si necesitas información que no está en los archivos, pregunta al equipo\n- Nunca inventas información del cliente\n- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica\n- Al final de cada entrega sugieres qué más podría necesitar el equipo`;
 }
 
 function TypingDots() {
@@ -335,6 +176,33 @@ function ReportScreen({ onGoToClient, allowedClients }) {
   );
 }
 
+async function fetchDriveFiles(folderId) {
+  const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&fields=files(id,name,mimeType)&key=${GOOGLE_API_KEY}`;
+  const res = await fetch(url);
+  const data = await res.json();
+  return data.files || [];
+}
+
+async function fetchDocContent(file) {
+  if (file.mimeType === "application/vnd.google-apps.document") {
+    const url = `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/plain&key=${GOOGLE_API_KEY}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return await res.text();
+  }
+  return null;
+}
+
+async function loadClientContext(folderId) {
+  const files = await fetchDriveFiles(folderId);
+  const results = [];
+  for (const file of files) {
+    const content = await fetchDocContent(file);
+    if (content) results.push({ name: file.name, content: content.slice(0, 8000) });
+  }
+  return results;
+}
+
 export default function LupitaApp() {
   const [authState, setAuthState] = useState("loading");
   const [currentUser, setCurrentUser] = useState(null);
@@ -346,8 +214,7 @@ export default function LupitaApp() {
   const [loadingDrive, setLoadingDrive] = useState(false);
   const [driveFiles, setDriveFiles] = useState([]);
   const [driveStatus, setDriveStatus] = useState("");
-  const [geminiData, setGeminiData] = useState(null);
-  const [geminiStatus, setGeminiStatus] = useState("");
+  const [newsContext, setNewsContext] = useState(null);
   const [copied, setCopied] = useState(false);
   const [urlError, setUrlError] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -401,15 +268,12 @@ export default function LupitaApp() {
     if (client) startChat(client);
   };
 
-  // ── startChat carga Drive + Gemini en paralelo ────────────────────────────
   const startChat = async (client) => {
     setActiveClient(client); setScreen("chat"); setLoadingDrive(true);
     setDriveStatus("Cargando Drive y noticias del sector..."); setMessages([]);
     setNewsContext(null);
-
     let files = [];
     let news = null;
-
     try {
       [files, news] = await Promise.all([
         loadClientContext(client.folderId),
@@ -418,19 +282,16 @@ export default function LupitaApp() {
       setDriveFiles(files);
       setNewsContext(news);
       setDriveStatus(files.length > 0
-        ? `${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Noticias actualizadas" : "sin noticias"}`
-        : `Sin archivos en Drive · ${news ? "🌐 Noticias cargadas" : ""}`
+        ? `${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Noticias cargadas" : "sin noticias"}`
+        : `Sin archivos · ${news ? "🌐 Noticias cargadas" : ""}`
       );
     } catch {
       setDriveStatus("Error al cargar contexto");
     }
-
     systemPromptRef.current = buildSystemPrompt(client, files, news);
     setLoadingDrive(false);
-
     const fileNames = files.map(f => `· ${f.name}`).join("\n");
     const newsLine = news ? "\n\n🌐 **Noticias del sector cargadas** — tengo contexto de las tendencias más recientes." : "";
-
     setMessages([{ role: "assistant", content: files.length > 0
       ? `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.\n\nHe leído **${files.length} archivo${files.length > 1 ? "s" : ""}** de Drive:\n${fileNames}${newsLine}\n\n¿Qué necesitas generar hoy?`
       : `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.${newsLine}\n\n¿Qué necesitas generar?`
@@ -474,6 +335,13 @@ export default function LupitaApp() {
     setLoadingDrive(false);
   };
 
+  const errorMessages = {
+    domain_not_allowed: "Solo cuentas @neuma.mx pueden acceder.",
+    user_not_authorized: "Tu cuenta no tiene permisos asignados. Contacta a la directora.",
+    auth_failed: "Error de autenticación. Intenta de nuevo.",
+    session_expired: "Tu sesión expiró. Inicia sesión nuevamente.",
+  };
+
   if (authState === "loading") return (
     <div style={{ minHeight: "100vh", background: "#07090C", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <style>{`@keyframes lupSpin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }`}</style>
@@ -484,11 +352,44 @@ export default function LupitaApp() {
     </div>
   );
 
-  if (authState === "login") return <LoginScreen error={urlError} />;
-  if (authState === "unauthorized") return <UnauthorizedScreen user={currentUser} onLogout={handleLogout} />;
+  if (authState === "login") return (
+    <div style={{ minHeight: "100vh", background: "#07090C", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Georgia', serif", padding: 20 }}>
+      <style>{`@keyframes lupIn { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:none} } button:hover { opacity: 0.92; }`}</style>
+      <div style={{ maxWidth: 400, width: "100%", textAlign: "center", animation: "lupIn 0.4s ease" }}>
+        <div style={{ width: 64, height: 64, borderRadius: 18, background: "linear-gradient(135deg, #052e16, #16A34A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 24px" }}>✦</div>
+        <p style={{ fontSize: 10, letterSpacing: "0.3em", color: "#1a4a1a", textTransform: "uppercase", marginBottom: 8 }}>Neuma · Agencia de RRPP</p>
+        <h1 style={{ fontSize: 32, fontWeight: 400, margin: "0 0 8px", letterSpacing: "-0.02em", color: "#F0FDF4" }}>Bienvenida a <em style={{ color: "#4ADE80" }}>Lupita</em></h1>
+        <p style={{ color: "#374151", fontSize: 14, margin: "0 0 36px", lineHeight: 1.7 }}>Tu agente de IA para Relaciones Públicas.<br />Inicia sesión con tu cuenta de Neuma.</p>
+        {urlError && errorMessages[urlError] && (
+          <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 10, padding: "10px 16px", marginBottom: 20 }}>
+            <p style={{ color: "#FCA5A5", fontSize: 13, margin: 0 }}>⚠ {errorMessages[urlError]}</p>
+          </div>
+        )}
+        <button onClick={() => {
+          const params = new URLSearchParams({ client_id: GOOGLE_CLIENT_ID, redirect_uri: `${window.location.origin}/auth/callback`, response_type: "code", scope: "openid email profile", hd: "neuma.mx", access_type: "online", prompt: "select_account" });
+          window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+        }} style={{ width: "100%", background: "#fff", border: "none", borderRadius: 12, padding: "14px 20px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, fontSize: 15, fontWeight: 600, color: "#1a1a1a", transition: "all 0.2s", boxShadow: "0 2px 16px rgba(74,222,128,0.1)" }}>
+          <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          Iniciar sesión con Google
+        </button>
+        <p style={{ fontSize: 11, color: "#1a3a1a", marginTop: 20, lineHeight: 1.6 }}>Solo cuentas <strong style={{ color: "#2a5a2a" }}>@neuma.mx</strong> tienen acceso.</p>
+      </div>
+    </div>
+  );
+
+  if (authState === "unauthorized") return (
+    <div style={{ minHeight: "100vh", background: "#07090C", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Georgia', serif", padding: 20 }}>
+      <div style={{ maxWidth: 400, width: "100%", textAlign: "center" }}>
+        <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
+        <h2 style={{ color: "#F0FDF4", fontWeight: 400, marginBottom: 8 }}>Acceso restringido</h2>
+        <p style={{ color: "#374151", fontSize: 14, marginBottom: 24 }}>Tu cuenta <strong style={{ color: "#6B7280" }}>{currentUser?.email}</strong> no tiene permisos asignados.<br />Contacta a la directora para que te agregue al sistema.</p>
+        <button onClick={handleLogout} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#9CA3AF", borderRadius: 10, padding: "10px 20px", cursor: "pointer", fontSize: 13 }}>Cerrar sesión</button>
+      </div>
+    </div>
+  );
 
   const backLabel = screen === "chat" ? "← Clientes" : screen === "reporte" ? "← Inicio" : null;
-  const backAction = screen === "chat" ? () => { setScreen("home"); setMessages([]); setActiveClient(null); setDriveFiles([]); setGeminiData(null); setNewsContext(null); } : screen === "reporte" ? () => setScreen("home") : null;
+  const backAction = screen === "chat" ? () => { setScreen("home"); setMessages([]); setActiveClient(null); setDriveFiles([]); setNewsContext(null); } : screen === "reporte" ? () => setScreen("home") : null;
 
   return (
     <div style={{ minHeight: "100vh", background: "#07090C", fontFamily: "'Georgia', serif", color: "#E2E8F0" }}>
@@ -520,11 +421,9 @@ export default function LupitaApp() {
             </div>
           </div>
         </div>
-
         <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
           {screen === "chat" && (
             <>
-              {geminiStatus && <span style={{ fontSize: 10, color: geminiData ? "#60A5FA" : "#4B5563", display: "flex", alignItems: "center", gap: 4 }}><span>🌐</span>{geminiStatus}</span>}
               {driveStatus && <span style={{ fontSize: 10, color: loadingDrive ? "#FBBF24" : "#4ADE80", display: "flex", alignItems: "center", gap: 5 }}>{loadingDrive ? <span style={{ display: "inline-block", width: 8, height: 8, border: "1.5px solid #FBBF24", borderTopColor: "transparent", borderRadius: "50%", animation: "lupSpin 0.7s linear infinite" }} /> : <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />}{driveStatus}</span>}
               <button onClick={refreshDrive} disabled={loadingDrive} style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.15)", color: "#4ADE80", borderRadius: 8, padding: "5px 11px", fontSize: 11, cursor: "pointer" }}>↻ Drive</button>
               <button onClick={copyLast} style={{ background: "rgba(74,222,128,0.07)", border: "1px solid rgba(74,222,128,0.18)", color: "#4ADE80", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>{copied ? "✓ Copiado" : "📋 Copiar"}</button>
@@ -548,9 +447,7 @@ export default function LupitaApp() {
                   <div style={{ fontSize: 11, color: "#4B5563" }}>{currentUser?.email}</div>
                   <div style={{ fontSize: 10, color: "#4ADE80", marginTop: 4 }}>{currentUser?.role === "directora" ? "✦ Directora · Acceso total" : `Account · ${CLIENTS.length} cliente${CLIENTS.length !== 1 ? "s" : ""}`}</div>
                 </div>
-                <button onClick={handleLogout} style={{ width: "100%", background: "transparent", border: "none", color: "#F87171", fontSize: 12, padding: "8px 12px", cursor: "pointer", textAlign: "left", borderRadius: 8 }}>
-                  → Cerrar sesión
-                </button>
+                <button onClick={handleLogout} style={{ width: "100%", background: "transparent", border: "none", color: "#F87171", fontSize: 12, padding: "8px 12px", cursor: "pointer", textAlign: "left", borderRadius: 8 }}>→ Cerrar sesión</button>
               </div>
             )}
           </div>
