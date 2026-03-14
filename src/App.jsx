@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from "react";
 const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+const INBOX_SHEET_ID = "1iinP_KunZ3eNyM9olU6aY_BhOyGrVSjn6t0T9cGnb3c";
 
 const ALL_CLIENTS = [
   { id: "pfizer", name: "Pfizer México", industry: "Farmacéutica", color: "#4A90D9", initials: "PF", folderId: "1Z0iOscR22coaCxWLHNlGFMFUb6GLES69", searchQuery: "Pfizer México farmacéutica salud noticias" },
@@ -51,7 +52,41 @@ async function searchGemini(query) {
     return null;
   }
 }
+
+// ── SHEETS: carga alertas recientes del Lupita Inbox ────────────────────────
+async function fetchInboxAlerts(clientName) {
+  try {
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${INBOX_SHEET_ID}/values/Inbox%20General?key=${GOOGLE_API_KEY}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    const rows = data.values || [];
+    if (rows.length < 2) return [];
+    const headers = rows[0].map(h => h.toLowerCase());
+    const iCliente = headers.indexOf("cliente");
+    const iFecha = headers.indexOf("fecha");
+    const iFuente = headers.indexOf("fuente");
+    const iAsunto = headers.indexOf("asunto");
+    const iResumen = headers.indexOf("resumen");
+    const iTipo = headers.indexOf("tipo");
+    return rows.slice(1)
+      .filter(row => !clientName || (row[iCliente] || "").toLowerCase().includes(clientName.toLowerCase()))
+      .slice(-20)
+      .reverse()
+      .map(row => ({
+        cliente: row[iCliente] || "",
+        fecha: row[iFecha] || "",
+        fuente: row[iFuente] || "",
+        asunto: row[iAsunto] || "",
+        resumen: row[iResumen] || "",
+        tipo: row[iTipo] || "",
+      }));
+  } catch (e) {
+    console.warn("Sheets fetch failed:", e);
+    return [];
+  }
+}
 // ─────────────────────────────────────────────────────────────────────────────
+
 
 function buildSystemPrompt(client, driveFiles, newsContext) {
   const fileSection = driveFiles.length > 0
@@ -100,78 +135,85 @@ function SentimentBadge({ s }) {
   return <span style={{ fontSize: 10, padding: "2px 8px", background: bg, color, borderRadius: 20, fontWeight: 700 }}>{label}</span>;
 }
 
-function ReportScreen({ onGoToClient, allowedClients }) {
-  const r = MOCK_REPORT;
+function ReportScreen({ onGoToClient, allowedClients, clients }) {
   const [expanded, setExpanded] = useState(null);
-  const visibleClients = r.clientes.filter(c => allowedClients.includes("*") || allowedClients.includes(c.id));
+  const [inboxData, setInboxData] = useState({});
+  const [loadingInbox, setLoadingInbox] = useState(true);
+  const fecha = new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+
+  useEffect(() => {
+    const load = async () => {
+      setLoadingInbox(true);
+      const allAlerts = await fetchInboxAlerts("");
+      const byClient = {};
+      allAlerts.forEach(a => {
+        const key = a.cliente;
+        if (!byClient[key]) byClient[key] = [];
+        byClient[key].push(a);
+      });
+      setInboxData(byClient);
+      setLoadingInbox(false);
+    };
+    load();
+  }, []);
+
+  const visibleClients = clients.filter(c => allowedClients.includes("*") || allowedClients.includes(c.id));
+  const allAlerts = Object.values(inboxData).flat();
+  const hasAlerts = allAlerts.some(a => a.tipo === "alerta");
+
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "32px 20px", animation: "lupIn 0.4s ease" }}>
       <div style={{ marginBottom: 28 }}>
-        <p style={{ fontSize: 10, letterSpacing: "0.3em", color: "#1a4a1a", textTransform: "uppercase", marginBottom: 6 }}>Monitoreo Matutino · {r.hora}</p>
+        <p style={{ fontSize: 10, letterSpacing: "0.3em", color: "#1a4a1a", textTransform: "uppercase", marginBottom: 6 }}>Monitoreo · En tiempo real</p>
         <h1 style={{ fontSize: "clamp(20px, 3vw, 28px)", fontWeight: 400, margin: "0 0 6px", letterSpacing: "-0.02em" }}>Buenos días, <em style={{ color: "#4ADE80" }}>Neuma</em></h1>
-        <p style={{ fontSize: 12, color: "#374151", margin: 0, textTransform: "capitalize" }}>{r.fecha}</p>
+        <p style={{ fontSize: 12, color: "#374151", margin: 0, textTransform: "capitalize" }}>{fecha}</p>
       </div>
       <div style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 14, padding: "16px 18px", marginBottom: 20, display: "flex", gap: 12 }}>
         <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg, #14532D, #22C55E)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0 }}>✦</div>
-        <div><div style={{ fontSize: 11, color: "#4ADE80", fontWeight: 700, marginBottom: 4 }}>RESUMEN LUPITA</div><div style={{ fontSize: 13, color: "#CBD5E1", lineHeight: 1.6 }}>{r.resumenGeneral}</div></div>
+        <div><div style={{ fontSize: 11, color: "#4ADE80", fontWeight: 700, marginBottom: 4 }}>RESUMEN LUPITA</div><div style={{ fontSize: 13, color: "#CBD5E1", lineHeight: 1.6 }}>{loadingInbox ? "Cargando alertas recientes..." : hasAlerts ? `Hay alertas activas. Revisa los clientes marcados.` : `Sin alertas críticas hoy. ${allAlerts.length} menciones registradas.`}</div></div>
       </div>
-      {visibleClients.filter(c => c.alerta).map(c => (
-        <div key={c.id} style={{ background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.25)", borderRadius: 14, padding: "14px 18px", marginBottom: 14, display: "flex", gap: 12, alignItems: "center" }}>
-          <span style={{ fontSize: 18 }}>🚨</span>
-          <div style={{ flex: 1 }}><div style={{ fontSize: 11, color: "#FCA5A5", fontWeight: 700, marginBottom: 2 }}>ALERTA · {c.name.toUpperCase()}</div><div style={{ fontSize: 13, color: "#FEE2E2" }}>{c.alertaTexto}</div></div>
-          <button onClick={() => onGoToClient(c.id)} style={{ background: "rgba(239,68,68,0.15)", border: "1px solid rgba(239,68,68,0.3)", color: "#FCA5A5", borderRadius: 8, padding: "5px 12px", fontSize: 11, cursor: "pointer" }}>Ver detalle →</button>
-        </div>
-      ))}
-      {visibleClients.map((c, idx) => (
-        <div key={c.id} style={{ background: "rgba(255,255,255,0.02)", border: `1px solid ${c.alerta ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.06)"}`, borderRadius: 16, marginBottom: 12, overflow: "hidden", animation: `lupIn 0.4s ease ${idx * 0.08}s both` }}>
-          <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => setExpanded(expanded === c.id ? null : c.id)}>
-            <div style={{ width: 38, height: 38, borderRadius: 10, background: c.color + "18", border: `1.5px solid ${c.color}33`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: c.color, flexShrink: 0 }}>{c.initials}</div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "#E2E8F0", marginBottom: 3 }}>{c.name}</div>
-              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <SentimentBadge s={c.sentimiento} />
-                <span style={{ fontSize: 11, color: "#4B5563" }}>{c.menciones} menciones <span style={{ color: c.menciones > c.mencionesAyer ? "#4ADE80" : "#F87171" }}>{c.menciones > c.mencionesAyer ? `↑ +${c.menciones - c.mencionesAyer}` : `↓ ${c.menciones - c.mencionesAyer}`} vs ayer</span></span>
-                {c.alerta && <span style={{ fontSize: 10, color: "#FCA5A5", background: "rgba(239,68,68,0.1)", padding: "2px 7px", borderRadius: 20 }}>⚠ Alerta</span>}
+      {visibleClients.map((c, idx) => {
+        const clientAlerts = inboxData[c.name] || [];
+        const hasAlert = clientAlerts.some(a => a.tipo === "alerta");
+        return (
+          <div key={c.id} style={{ background: "rgba(255,255,255,0.02)", border: `1px solid ${hasAlert ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.06)"}`, borderRadius: 16, marginBottom: 12, overflow: "hidden", animation: `lupIn 0.4s ease ${idx * 0.08}s both` }}>
+            <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => setExpanded(expanded === c.id ? null : c.id)}>
+              <div style={{ width: 38, height: 38, borderRadius: 10, background: c.color + "18", border: `1.5px solid ${c.color}33`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: c.color, flexShrink: 0 }}>{c.initials}</div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: "#E2E8F0", marginBottom: 3 }}>{c.name}</div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, color: "#4B5563" }}>{clientAlerts.length} alertas registradas</span>
+                  {hasAlert && <span style={{ fontSize: 10, color: "#FCA5A5", background: "rgba(239,68,68,0.1)", padding: "2px 7px", borderRadius: 20 }}>⚠ Alerta</span>}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 7 }}>
+                <button onClick={(e) => { e.stopPropagation(); onGoToClient(c.id); }} style={{ background: `${c.color}15`, border: `1px solid ${c.color}33`, color: c.color, borderRadius: 8, padding: "5px 11px", fontSize: 11, cursor: "pointer" }}>Ir a chat →</button>
+                <span style={{ color: "#4B5563", fontSize: 14, padding: "5px" }}>{expanded === c.id ? "▲" : "▼"}</span>
               </div>
             </div>
-            <div style={{ display: "flex", gap: 7 }}>
-              <button onClick={(e) => { e.stopPropagation(); onGoToClient(c.id); }} style={{ background: `${c.color}15`, border: `1px solid ${c.color}33`, color: c.color, borderRadius: 8, padding: "5px 11px", fontSize: 11, cursor: "pointer" }}>Ir a chat →</button>
-              <span style={{ color: "#4B5563", fontSize: 14, padding: "5px" }}>{expanded === c.id ? "▲" : "▼"}</span>
-            </div>
+            {expanded === c.id && (
+              <div style={{ borderTop: "1px solid rgba(255,255,255,0.04)", padding: "16px 18px" }}>
+                {clientAlerts.length === 0 ? (
+                  <div style={{ fontSize: 13, color: "#4B5563", textAlign: "center", padding: "20px 0" }}>Sin alertas registradas aún.</div>
+                ) : (
+                  clientAlerts.map((a, i) => (
+                    <div key={i} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
+                      <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                        <span style={{ fontSize: 10, padding: "2px 8px", background: a.fuente === "Brand24" ? "rgba(74,222,128,0.1)" : "rgba(96,165,250,0.1)", color: a.fuente === "Brand24" ? "#4ADE80" : "#60A5FA", borderRadius: 20 }}>{a.fuente}</span>
+                        <span style={{ fontSize: 10, color: "#4B5563" }}>{a.fecha?.slice(0, 10)}</span>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 3 }}>{a.asunto}</div>
+                        <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.5 }}>{a.resumen?.slice(0, 200)}</div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
           </div>
-          {expanded === c.id && (
-            <div style={{ borderTop: "1px solid rgba(255,255,255,0.04)", padding: "16px 18px" }}>
-              <div style={{ background: "rgba(74,222,128,0.04)", border: "1px solid rgba(74,222,128,0.1)", borderRadius: 10, padding: "12px 14px", marginBottom: 14 }}>
-                <div style={{ fontSize: 10, color: "#4ADE80", fontWeight: 700, marginBottom: 5 }}>✦ ANÁLISIS LUPITA</div>
-                <div style={{ fontSize: 12.5, color: "#CBD5E1", lineHeight: 1.65 }}>{c.resumenLupita}</div>
-              </div>
-              {c.prensa.length > 0 && (
-                <div style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: 10, color: "#6B7280", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 8 }}>📰 PRENSA Y MEDIOS</div>
-                  {c.prensa.map((p, i) => (
-                    <div key={i} style={{ display: "flex", gap: 10, padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
-                      <span style={{ fontSize: 10, padding: "2px 7px", background: p.sentimiento === "positivo" ? "#DCFCE7" : "#F1F5F9", color: p.sentimiento === "positivo" ? "#166534" : "#475569", borderRadius: 20, flexShrink: 0 }}>{p.medio}</span>
-                      <span style={{ fontSize: 12.5, color: "#CBD5E1", lineHeight: 1.5 }}>{p.titulo}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div>
-                <div style={{ fontSize: 10, color: "#6B7280", fontWeight: 700, letterSpacing: "0.1em", marginBottom: 8 }}>📱 REDES SOCIALES</div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 8 }}>
-                  {c.redes.map((r, i) => (
-                    <div key={i} style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.05)", borderRadius: 10, padding: "10px 12px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}><span style={{ fontSize: 11, fontWeight: 700, color: "#E2E8F0" }}>{r.plataforma}</span><SentimentBadge s={r.sentimiento} /></div>
-                      <div style={{ fontSize: 11, color: "#4ADE80", marginBottom: 4 }}>{r.menciones} menciones</div>
-                      <div style={{ fontSize: 11, color: "#4B5563", fontStyle: "italic" }}>"{r.topPost.slice(0, 80)}..."</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -466,16 +508,7 @@ export default function LupitaApp() {
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />
             Conectada a Google Drive · Gemini · {CLIENTS.length} cliente{CLIENTS.length !== 1 ? "s" : ""} asignado{CLIENTS.length !== 1 ? "s" : ""}
           </div>
-          {MOCK_REPORT.clientes.some(c => c.alerta && (currentUser?.clients?.includes("*") || currentUser?.clients?.includes(c.id))) && (
-            <div onClick={() => setScreen("reporte")} style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 12, padding: "12px 16px", marginBottom: 20, cursor: "pointer", display: "flex", gap: 10, alignItems: "center" }}>
-              <span>🚨</span>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 11, color: "#FCA5A5", fontWeight: 700, marginBottom: 2 }}>ALERTA EN REPORTE MATUTINO</div>
-                <div style={{ fontSize: 12, color: "#FEE2E2" }}>{MOCK_REPORT.clientes.find(c => c.alerta && (currentUser?.clients?.includes("*") || currentUser?.clients?.includes(c.id)))?.alertaTexto}</div>
-              </div>
-              <span style={{ color: "#FCA5A5", fontSize: 13 }}>Ver →</span>
-            </div>
-          )}
+          
           <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 40 }}>
             {CLIENTS.map((client, i) => (
               <button key={client.id} onClick={() => startChat(client)} style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: "18px 20px", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 16, transition: "all 0.2s", animation: `lupIn 0.4s ease ${i * 0.07}s both` }}
@@ -487,7 +520,7 @@ export default function LupitaApp() {
                   <div style={{ fontSize: 15, fontWeight: 600, color: "#E2E8F0", marginBottom: 2 }}>{client.name}</div>
                   <div style={{ fontSize: 12, color: "#4B5563" }}>{client.industry}</div>
                 </div>
-                {MOCK_REPORT.clientes.find(c => c.id === client.id)?.alerta && <span style={{ fontSize: 10, color: "#FCA5A5", background: "rgba(239,68,68,0.1)", padding: "2px 8px", borderRadius: 20 }}>⚠ Alerta</span>}
+                
                 <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "#2a4a2a" }}>
                   <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block", opacity: 0.6 }} />Drive + Gemini
                 </div>
@@ -504,7 +537,7 @@ export default function LupitaApp() {
         </div>
       )}
 
-      {screen === "reporte" && <ReportScreen onGoToClient={goToClient} allowedClients={currentUser?.clients || []} />}
+      {screen === "reporte" && <ReportScreen onGoToClient={goToClient} allowedClients={currentUser?.clients || []} clients={CLIENTS} />}
 
       {/* CHAT */}
       {screen === "chat" && (
