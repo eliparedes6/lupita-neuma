@@ -346,7 +346,8 @@ export default function LupitaApp() {
   const [loadingDrive, setLoadingDrive] = useState(false);
   const [driveFiles, setDriveFiles] = useState([]);
   const [driveStatus, setDriveStatus] = useState("");
-  const [newsContext, setNewsContext] = useState(null);
+  const [geminiData, setGeminiData] = useState(null);
+  const [geminiStatus, setGeminiStatus] = useState("");
   const [copied, setCopied] = useState(false);
   const [urlError, setUrlError] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
