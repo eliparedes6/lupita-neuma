@@ -89,6 +89,73 @@ async function fetchInboxAlerts(clientName) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 
+
+// ── SHEETS: carga periodistas relevantes por sector ─────────────────────────
+async function fetchJournalists(sectors) {
+  try {
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${JOURNALISTS_SHEET_ID}/values/Base%20Periodistas%20Neuma?key=${GOOGLE_API_KEY}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    const rows = data.values || [];
+    if (rows.length < 2) return [];
+    const headers = rows[0].map(h => h.toLowerCase().trim());
+    const iNombre = headers.indexOf("nombre");
+    const iMedio = headers.indexOf("medio");
+    const iCargo = headers.indexOf("cargo");
+    const iSector = headers.indexOf("sector");
+    const iBeat = headers.indexOf("beat");
+    const iCorreo = headers.indexOf("correo");
+    const iCelular = headers.indexOf("celular");
+    const iEstado = headers.indexOf("estado");
+    const iNotas = headers.indexOf("notas");
+    return rows.slice(1)
+      .filter(row => {
+        const estado = (row[iEstado] || "").toLowerCase();
+        if (estado === "baja") return false;
+        if (!sectors || sectors.length === 0) return true;
+        const sector = (row[iSector] || "").toLowerCase();
+        const beat = (row[iBeat] || "").toLowerCase();
+        return sectors.some(s => sector.includes(s.toLowerCase()) || beat.includes(s.toLowerCase()));
+      })
+      .map(row => ({
+        nombre: row[iNombre] || "",
+        medio: row[iMedio] || "",
+        cargo: row[iCargo] || "",
+        sector: row[iSector] || "",
+        beat: row[iBeat] || "",
+        correo: row[iCorreo] || "",
+        celular: row[iCelular] || "",
+        notas: row[iNotas] || "",
+      }))
+      .filter(j => j.nombre && j.medio);
+  } catch (e) {
+    console.warn("Journalists fetch failed:", e);
+    return [];
+  }
+}
+
+function formatJournalistsContext(journalists) {
+  if (!journalists || journalists.length === 0) return "";
+  const byMedio = {};
+  journalists.forEach(j => {
+    if (!byMedio[j.medio]) byMedio[j.medio] = [];
+    byMedio[j.medio].push(j);
+  });
+  let ctx = `\n\nBASE DE PERIODISTAS RELEVANTES (${journalists.length} contactos):\n`;
+  Object.entries(byMedio).slice(0, 30).forEach(([medio, js]) => {
+    ctx += `\n${medio}:\n`;
+    js.forEach(j => {
+      ctx += `  · ${j.nombre} | ${j.cargo}`;
+      if (j.correo) ctx += ` | ${j.correo}`;
+      if (j.notas) ctx += ` | Nota: ${j.notas}`;
+      ctx += "\n";
+    });
+  });
+  if (Object.keys(byMedio).length > 30) ctx += `\n... y más periodistas disponibles.\n`;
+  return ctx;
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function buildSystemPrompt(client, driveFiles, newsContext, journalists) {
   const fileSection = driveFiles.length > 0
     ? `\n\nARCHIVOS DEL CLIENTE EN DRIVE:\n` + driveFiles.map(f => `\n--- ${f.name} ---\n${f.content}`).join("\n")
@@ -96,8 +163,8 @@ function buildSystemPrompt(client, driveFiles, newsContext, journalists) {
   const newsSection = newsContext
     ? `\n\nCONTEXTO DE NOTICIAS Y TENDENCIAS DEL SECTOR (actualizado hoy):\n${newsContext}`
     : "";
-  const journalistsSection = formatJournalistsContext(journalists);
-  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma.\n\nCLIENTE ACTIVO: ${client.name}\nIndustria: ${client.industry}\n${fileSection}${newsSection}${journalistsSection}\n\nINSTRUCCIONES:\n- Siempre escribes en español\n- Usas la información de los archivos de Drive como base para todo el contenido\n- Cuando generes pitches o comunicados, usa las tendencias del sector para hacer el contenido más relevante\n- Si hay oportunidades de PR detectadas en las noticias, menciónaselas al equipo de forma proactiva\n- Si necesitas información que no está en los archivos, pregunta al equipo\n- Nunca inventas información del cliente\n- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica\n- Al final de cada entrega sugieres qué más podría necesitar el equipo`;
+  const journalistsSection = formatJournalistsContext(journalists || []);
+  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma.\n\nCLIENTE ACTIVO: ${client.name}\nIndustria: ${client.industry}\n${fileSection}${newsSection}${journalistsSection}\n\nINSTRUCCIONES:\n- Siempre escribes en español\n- Usas la información de los archivos de Drive como base para todo el contenido\n- Cuando generes pitches o comunicados, usa las tendencias del sector para hacer el contenido más relevante\n- Si hay oportunidades de PR detectadas en las noticias, menciónaselas al equipo de forma proactiva\n- Cuando el equipo pida enviar un comunicado, sugiere automáticamente a qué periodistas enviarlo basándote en la base de contactos y el tema del comunicado\n- Agrupa las sugerencias por sector (Salud, Negocios, Estilo de Vida, etc.) y muestra nombre, medio y correo de cada periodista sugerido\n- Si el equipo especifica un sector, filtra los periodistas de ese sector\n- Si necesitas información que no está en los archivos, pregunta al equipo\n- Nunca inventas información del cliente\n- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica\n- Al final de cada entrega sugieres qué más podría necesitar el equipo`;
 }
 
 function TypingDots() {
