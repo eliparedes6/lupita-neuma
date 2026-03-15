@@ -4,6 +4,7 @@ const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 const INBOX_SHEET_ID = "1iinP_KunZ3eNyM9olU6aY_BhOyGrVSjn6t0T9cGnb3c";
+const JOURNALISTS_SHEET_ID = "1y7wMQ1ak3QptRvt3BDhebIJucM0cX7aQ";
 
 const ALL_CLIENTS = [
   { id: "pfizer", name: "Pfizer México", industry: "Farmacéutica", color: "#4A90D9", initials: "PF", folderId: "1Z0iOscR22coaCxWLHNlGFMFUb6GLES69", searchQuery: "Pfizer México farmacéutica salud noticias" },
@@ -88,14 +89,15 @@ async function fetchInboxAlerts(clientName) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 
-function buildSystemPrompt(client, driveFiles, newsContext) {
+function buildSystemPrompt(client, driveFiles, newsContext, journalists) {
   const fileSection = driveFiles.length > 0
     ? `\n\nARCHIVOS DEL CLIENTE EN DRIVE:\n` + driveFiles.map(f => `\n--- ${f.name} ---\n${f.content}`).join("\n")
     : "\n\n(No se encontraron archivos en Drive para este cliente aún.)";
   const newsSection = newsContext
     ? `\n\nCONTEXTO DE NOTICIAS Y TENDENCIAS DEL SECTOR (actualizado hoy):\n${newsContext}`
     : "";
-  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma.\n\nCLIENTE ACTIVO: ${client.name}\nIndustria: ${client.industry}\n${fileSection}${newsSection}\n\nINSTRUCCIONES:\n- Siempre escribes en español\n- Usas la información de los archivos de Drive como base para todo el contenido\n- Cuando generes pitches o comunicados, usa las tendencias del sector para hacer el contenido más relevante\n- Si hay oportunidades de PR detectadas en las noticias, menciónaselas al equipo de forma proactiva\n- Si necesitas información que no está en los archivos, pregunta al equipo\n- Nunca inventas información del cliente\n- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica\n- Al final de cada entrega sugieres qué más podría necesitar el equipo`;
+  const journalistsSection = formatJournalistsContext(journalists);
+  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma.\n\nCLIENTE ACTIVO: ${client.name}\nIndustria: ${client.industry}\n${fileSection}${newsSection}${journalistsSection}\n\nINSTRUCCIONES:\n- Siempre escribes en español\n- Usas la información de los archivos de Drive como base para todo el contenido\n- Cuando generes pitches o comunicados, usa las tendencias del sector para hacer el contenido más relevante\n- Si hay oportunidades de PR detectadas en las noticias, menciónaselas al equipo de forma proactiva\n- Si necesitas información que no está en los archivos, pregunta al equipo\n- Nunca inventas información del cliente\n- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica\n- Al final de cada entrega sugieres qué más podría necesitar el equipo`;
 }
 
 function TypingDots() {
@@ -257,6 +259,8 @@ export default function LupitaApp() {
   const [driveFiles, setDriveFiles] = useState([]);
   const [driveStatus, setDriveStatus] = useState("");
   const [newsContext, setNewsContext] = useState(null);
+  const [journalists, setJournalists] = useState([]);
+  const [journalistsStatus, setJournalistsStatus] = useState("");
   const [copied, setCopied] = useState(false);
   const [urlError, setUrlError] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -313,24 +317,29 @@ export default function LupitaApp() {
   const startChat = async (client) => {
     setActiveClient(client); setScreen("chat"); setLoadingDrive(true);
     setDriveStatus("Cargando Drive y noticias del sector..."); setMessages([]);
-    setNewsContext(null);
+    setNewsContext(null); setJournalists([]); setJournalistsStatus("Cargando periodistas...");
     let files = [];
     let news = null;
+    let journalistsList = [];
     try {
-      [files, news] = await Promise.all([
+      [files, news, journalistsList] = await Promise.all([
         loadClientContext(client.folderId),
-        searchGemini(client.searchQuery)
+        searchGemini(client.searchQuery),
+        fetchJournalists([client.industry, client.searchQuery])
       ]);
       setDriveFiles(files);
       setNewsContext(news);
+      setJournalists(journalistsList);
+      setJournalistsStatus(`${journalistsList.length} periodistas relevantes`);
       setDriveStatus(files.length > 0
         ? `${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Noticias cargadas" : "sin noticias"}`
         : `Sin archivos · ${news ? "🌐 Noticias cargadas" : ""}`
       );
     } catch {
       setDriveStatus("Error al cargar contexto");
+      setJournalistsStatus("");
     }
-    systemPromptRef.current = buildSystemPrompt(client, files, news);
+    systemPromptRef.current = buildSystemPrompt(client, files, news, journalistsList);
     setLoadingDrive(false);
     const fileNames = files.map(f => `· ${f.name}`).join("\n");
     const newsLine = news ? "\n\n🌐 **Noticias del sector cargadas** — tengo contexto de las tendencias más recientes." : "";
@@ -365,13 +374,16 @@ export default function LupitaApp() {
     if (!activeClient) return;
     setLoadingDrive(true); setDriveStatus("Actualizando...");
     try {
-      const [files, news] = await Promise.all([
+      const [files, news, journalistsList] = await Promise.all([
         loadClientContext(activeClient.folderId),
-        searchGemini(activeClient.searchQuery)
+        searchGemini(activeClient.searchQuery),
+        fetchJournalists([activeClient.industry, activeClient.searchQuery])
       ]);
       setDriveFiles(files);
       setNewsContext(news);
-      systemPromptRef.current = buildSystemPrompt(activeClient, files, news);
+      setJournalists(journalistsList);
+      setJournalistsStatus(`${journalistsList.length} periodistas relevantes`);
+      systemPromptRef.current = buildSystemPrompt(activeClient, files, news, journalistsList);
       setDriveStatus(`${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Noticias actualizadas" : "sin noticias"}`);
     } catch { setDriveStatus("Error al actualizar"); }
     setLoadingDrive(false);
@@ -431,7 +443,7 @@ export default function LupitaApp() {
   );
 
   const backLabel = screen === "chat" ? "← Clientes" : screen === "reporte" ? "← Inicio" : null;
-  const backAction = screen === "chat" ? () => { setScreen("home"); setMessages([]); setActiveClient(null); setDriveFiles([]); setNewsContext(null); } : screen === "reporte" ? () => setScreen("home") : null;
+  const backAction = screen === "chat" ? () => { setScreen("home"); setMessages([]); setActiveClient(null); setDriveFiles([]); setNewsContext(null); setJournalists([]); setJournalistsStatus(""); } : screen === "reporte" ? () => setScreen("home") : null;
 
   return (
     <div style={{ minHeight: "100vh", background: "#07090C", fontFamily: "'Georgia', serif", color: "#E2E8F0" }}>
@@ -466,6 +478,7 @@ export default function LupitaApp() {
         <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
           {screen === "chat" && (
             <>
+              {journalistsStatus && <span style={{ fontSize: 10, color: journalists.length > 0 ? "#A78BFA" : "#4B5563", display: "flex", alignItems: "center", gap: 4 }}>👥 {journalistsStatus}</span>}
               {driveStatus && <span style={{ fontSize: 10, color: loadingDrive ? "#FBBF24" : "#4ADE80", display: "flex", alignItems: "center", gap: 5 }}>{loadingDrive ? <span style={{ display: "inline-block", width: 8, height: 8, border: "1.5px solid #FBBF24", borderTopColor: "transparent", borderRadius: "50%", animation: "lupSpin 0.7s linear infinite" }} /> : <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />}{driveStatus}</span>}
               <button onClick={refreshDrive} disabled={loadingDrive} style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.15)", color: "#4ADE80", borderRadius: 8, padding: "5px 11px", fontSize: 11, cursor: "pointer" }}>↻ Drive</button>
               <button onClick={copyLast} style={{ background: "rgba(74,222,128,0.07)", border: "1px solid rgba(74,222,128,0.18)", color: "#4ADE80", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>{copied ? "✓ Copiado" : "📋 Copiar"}</button>
@@ -547,6 +560,7 @@ export default function LupitaApp() {
               <span style={{ fontSize: 10, color: "#2a4a2a", marginRight: 2 }}>📂</span>
               {driveFiles.map((f, i) => <span key={i} style={{ fontSize: 10, padding: "2px 8px", background: activeClient.color + "0F", border: `1px solid ${activeClient.color}22`, borderRadius: 20, color: activeClient.color }}>{f.name}</span>)}
               {newsContext && <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: 20, color: "#818CF8" }}>🌐 Noticias del sector</span>}
+              {journalists.length > 0 && <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(167,139,250,0.1)", border: "1px solid rgba(167,139,250,0.25)", borderRadius: 20, color: "#A78BFA" }}>👥 {journalists.length} periodistas</span>}
             </div>
           )}
           {loadingDrive && messages.length === 0 && (
