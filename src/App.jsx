@@ -13,8 +13,9 @@ const ALL_CLIENTS = [
 ];
 
 const ACTIONS = [
-  { id: "comunicado", icon: "📋", label: "Comunicado de prensa", color: "#4ADE80", prompt: (c) => `Necesito redactar un comunicado de prensa para ${c.name}. Con base en los archivos del cliente, primero dime a qué periodistas de la base recomiendas enviarlo y por qué sectores. Luego pregúntame qué información adicional necesitas para redactarlo.` },
-  { id: "pitch", icon: "🎯", label: "Pitch para periodista", color: "#60A5FA", prompt: (c) => `Necesito un pitch para un periodista sobre ${c.name}. Primero dime qué periodistas de la base recomiendas contactar para este tema y por qué. Luego genera el pitch personalizado.` },
+  { id: "comunicado", icon: "📋", label: "Comunicado de prensa", color: "#4ADE80", prompt: (c) => `Necesito redactar un comunicado de prensa para ${c.name}. Primero pregúntame qué información necesitas para redactarlo. Una vez que tengas todo y redactes el comunicado, al final sugiere a qué periodistas de la base enviarlo agrupado por sector con nombre, medio y correo.` },
+  { id: "pitch", icon: "🎯", label: "Pitch para periodista", color: "#60A5FA", prompt: (c) => `Necesito un pitch para un periodista sobre ${c.name}. Usa el contexto que tienes del cliente para personalizarlo.` },
+  { id: "distribucion", icon: "📬", label: "Sugerir distribución", color: "#A78BFA", prompt: (c) => `El comunicado para ${c.name} está listo. Con base en la base de periodistas que tienes disponible, recomiéndame a quién enviarlo agrupado por sector con nombre, medio y correo.` },
   { id: "posts", icon: "📱", label: "Posts redes sociales", color: "#F472B6", prompt: (c) => `Quiero crear posts para redes sociales de ${c.name}. Usa el tono y mensajes clave del cliente.` },
   { id: "talking", icon: "🎤", label: "Talking points vocero", color: "#FBBF24", prompt: (c) => `Necesito preparar talking points para el vocero de ${c.name}. Usa el contexto del cliente para personalizar.` },
   { id: "crisis", icon: "⚠️", label: "Crisis statement", color: "#FB923C", prompt: (c) => `Necesito un crisis statement para ${c.name}. ¿Cuáles son los detalles de la situación?` },
