@@ -94,7 +94,7 @@ async function fetchInboxAlerts(clientName) {
 // ── SHEETS: carga periodistas relevantes por sector ─────────────────────────
 async function fetchJournalists(sectors) {
   try {
-    const sheetName = encodeURIComponent("Base Periodistas Neuma");
+    const sheetName = encodeURIComponent("Base_Periodistas_Neuma_Completa");
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${JOURNALISTS_SHEET_ID}/values/${sheetName}?key=${GOOGLE_API_KEY}`;
     const res = await fetch(url);
     if (!res.ok) { console.warn("Sheets error:", res.status); return []; }
