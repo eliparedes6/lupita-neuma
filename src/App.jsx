@@ -7,14 +7,14 @@ const INBOX_SHEET_ID = "1iinP_KunZ3eNyM9olU6aY_BhOyGrVSjn6t0T9cGnb3c";
 const JOURNALISTS_SHEET_ID = "1y7wMQ1ak3QptRvt3BDhebIJucM0cX7aQ";
 
 const ALL_CLIENTS = [
-  { id: "pfizer", name: "Pfizer México", industry: "Farmacéutica", color: "#4A90D9", initials: "PF", folderId: "1Z0iOscR22coaCxWLHNlGFMFUb6GLES69", searchQuery: "Pfizer México farmacéutica salud noticias", sectors: ["salud", "negocios", "general"] },
-  { id: "prudence", name: "Condones Prudence", industry: "Salud Sexual", color: "#D62B7C", initials: "PR", folderId: "1VJyRHA5VHyb9Ea6-kK9Iob0ZzQpsiWu0", searchQuery: "salud sexual México condones planificación familiar noticias", sectors: ["salud", "estilo de vida", "general"] },
-  { id: "soriana", name: "Organización Soriana", industry: "Retail", color: "#C8102E", initials: "SO", folderId: "1ExtUJGposXvT0tXZTyyWg_jfkRejQw2e", searchQuery: "Soriana retail supermercados México noticias", sectors: ["negocios", "estilo de vida", "general"] },
+  { id: "pfizer", name: "Pfizer México", industry: "Farmacéutica", color: "#4A90D9", initials: "PF", folderId: "1Z0iOscR22coaCxWLHNlGFMFUb6GLES69", searchQuery: "Pfizer México farmacéutica salud noticias" },
+  { id: "prudence", name: "Condones Prudence", industry: "Salud Sexual", color: "#D62B7C", initials: "PR", folderId: "1VJyRHA5VHyb9Ea6-kK9Iob0ZzQpsiWu0", searchQuery: "salud sexual México condones planificación familiar noticias" },
+  { id: "soriana", name: "Organización Soriana", industry: "Retail", color: "#C8102E", initials: "SO", folderId: "1ExtUJGposXvT0tXZTyyWg_jfkRejQw2e", searchQuery: "Soriana retail supermercados México noticias" },
 ];
 
 const ACTIONS = [
-  { id: "comunicado", icon: "📋", label: "Comunicado de prensa", color: "#4ADE80", prompt: (c) => `Necesito redactar un comunicado de prensa para ${c.name}. Con base en los archivos del cliente, primero dime a qué periodistas de la base recomiendas enviarlo y por qué sectores. Luego pregúntame qué información adicional necesitas para redactarlo.` },
-  { id: "pitch", icon: "🎯", label: "Pitch para periodista", color: "#60A5FA", prompt: (c) => `Necesito un pitch para un periodista sobre ${c.name}. Primero dime qué periodistas de la base recomiendas contactar para este tema y por qué. Luego genera el pitch personalizado.` },
+  { id: "comunicado", icon: "📋", label: "Comunicado de prensa", color: "#4ADE80", prompt: (c) => `Necesito redactar un comunicado de prensa para ${c.name}. Con base en los archivos que tienes del cliente, ¿qué información adicional necesitas para generarlo?` },
+  { id: "pitch", icon: "🎯", label: "Pitch para periodista", color: "#60A5FA", prompt: (c) => `Necesito un pitch para un periodista sobre ${c.name}. Usa el contexto que tienes del cliente para personalizarlo.` },
   { id: "posts", icon: "📱", label: "Posts redes sociales", color: "#F472B6", prompt: (c) => `Quiero crear posts para redes sociales de ${c.name}. Usa el tono y mensajes clave del cliente.` },
   { id: "talking", icon: "🎤", label: "Talking points vocero", color: "#FBBF24", prompt: (c) => `Necesito preparar talking points para el vocero de ${c.name}. Usa el contexto del cliente para personalizar.` },
   { id: "crisis", icon: "⚠️", label: "Crisis statement", color: "#FB923C", prompt: (c) => `Necesito un crisis statement para ${c.name}. ¿Cuáles son los detalles de la situación?` },
@@ -93,14 +93,12 @@ async function fetchInboxAlerts(clientName) {
 // ── SHEETS: carga periodistas relevantes por sector ─────────────────────────
 async function fetchJournalists(sectors) {
   try {
-    const sheetName = encodeURIComponent("Base Periodistas Neuma");
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${JOURNALISTS_SHEET_ID}/values/${sheetName}?key=${GOOGLE_API_KEY}`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${JOURNALISTS_SHEET_ID}/values/Base%20Periodistas%20Neuma?key=${GOOGLE_API_KEY}`;
     const res = await fetch(url);
-    if (!res.ok) { console.warn("Sheets error:", res.status); return []; }
     const data = await res.json();
     const rows = data.values || [];
     if (rows.length < 2) return [];
-    const headers = rows[0].map(h => (h || "").toLowerCase().trim());
+    const headers = rows[0].map(h => h.toLowerCase().trim());
     const iNombre = headers.indexOf("nombre");
     const iMedio = headers.indexOf("medio");
     const iCargo = headers.indexOf("cargo");
@@ -110,25 +108,26 @@ async function fetchJournalists(sectors) {
     const iCelular = headers.indexOf("celular");
     const iEstado = headers.indexOf("estado");
     const iNotas = headers.indexOf("notas");
-    const filtered = rows.slice(1).filter(row => {
-      if (!row[iNombre] || !row[iMedio]) return false;
-      const estado = (row[iEstado] || "").toLowerCase();
-      if (estado === "baja") return false;
-      if (!sectors || sectors.length === 0) return true;
-      const sector = (row[iSector] || "").toLowerCase();
-      const beat = (row[iBeat] || "").toLowerCase();
-      return sectors.some(s => sector.includes(s) || beat.includes(s));
-    });
-    return filtered.map(row => ({
-      nombre: row[iNombre] || "",
-      medio: row[iMedio] || "",
-      cargo: row[iCargo] || "",
-      sector: row[iSector] || "",
-      beat: row[iBeat] || "",
-      correo: row[iCorreo] || "",
-      celular: row[iCelular] || "",
-      notas: row[iNotas] || "",
-    }));
+    return rows.slice(1)
+      .filter(row => {
+        const estado = (row[iEstado] || "").toLowerCase();
+        if (estado === "baja") return false;
+        if (!sectors || sectors.length === 0) return true;
+        const sector = (row[iSector] || "").toLowerCase();
+        const beat = (row[iBeat] || "").toLowerCase();
+        return sectors.some(s => sector.includes(s.toLowerCase()) || beat.includes(s.toLowerCase()));
+      })
+      .map(row => ({
+        nombre: row[iNombre] || "",
+        medio: row[iMedio] || "",
+        cargo: row[iCargo] || "",
+        sector: row[iSector] || "",
+        beat: row[iBeat] || "",
+        correo: row[iCorreo] || "",
+        celular: row[iCelular] || "",
+        notas: row[iNotas] || "",
+      }))
+      .filter(j => j.nombre && j.medio);
   } catch (e) {
     console.warn("Journalists fetch failed:", e);
     return [];
@@ -393,7 +392,7 @@ export default function LupitaApp() {
       [files, news, journalistsList] = await Promise.all([
         loadClientContext(client.folderId),
         searchGemini(client.searchQuery),
-        fetchJournalists(client.sectors || [client.industry])
+        fetchJournalists([client.industry, client.searchQuery])
       ]);
       setDriveFiles(files);
       setNewsContext(news);
@@ -445,7 +444,7 @@ export default function LupitaApp() {
       const [files, news, journalistsList] = await Promise.all([
         loadClientContext(activeClient.folderId),
         searchGemini(activeClient.searchQuery),
-        fetchJournalists(activeClient.sectors || [activeClient.industry])
+        fetchJournalists([activeClient.industry, activeClient.searchQuery])
       ]);
       setDriveFiles(files);
       setNewsContext(news);
