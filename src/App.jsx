@@ -4,7 +4,7 @@ const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
 const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 const INBOX_SHEET_ID = "1iinP_KunZ3eNyM9olU6aY_BhOyGrVSjn6t0T9cGnb3c";
-const JOURNALISTS_SHEET_ID = "1y7wMQ1ak3QptRvt3BDhebIJucM0cX7aQ";
+const JOURNALISTS_SHEET_ID = "1mY8b69fPrt_GfNK8Rn_-02vD1zIUj01pKxy5R1m-p_0";
 
 const ALL_CLIENTS = [
   { id: "pfizer", name: "Pfizer México", industry: "Farmacéutica", color: "#4A90D9", initials: "PF", folderId: "1Z0iOscR22coaCxWLHNlGFMFUb6GLES69", searchQuery: "Pfizer México farmacéutica salud noticias", sectors: ["salud", "negocios", "general"] },
