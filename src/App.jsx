@@ -313,7 +313,7 @@ function ReportScreen({ onGoToClient, allowedClients, clients }) {
 
       {visibleClients.map((c, idx) => {
         const clientAlerts = Object.entries(inboxData)
-          .filter(([key]) => key.toLowerCase().includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(key.toLowerCase()))
+          .filter(([key]) => key.toLowerCase().includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(key.toLowerCase()) || key === "General")
           .flatMap(([, alerts]) => alerts);
         const hasAlert = clientAlerts.some(a => a.tipo === "alerta");
 
