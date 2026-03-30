@@ -347,7 +347,7 @@ function ReportScreen({ onGoToClient, allowedClients, clients }) {
                       </div>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 3 }}>{a.asunto}</div>
-                        <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.5 }}>{a.resumen?.slice(0, 300)}</div>
+                        <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.5 }}>{a.resumen?.slice(0, 600)}</div>
                       </div>
                     </div>
                   ))
