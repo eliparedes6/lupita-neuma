@@ -21,7 +21,7 @@ const ACTIONS = [
   { id: "crisis", icon: "⚠️", label: "Crisis statement", color: "#FB923C", prompt: (c) => `Necesito un crisis statement para ${c.name}. ¿Cuáles son los detalles de la situación?` },
 ];
 
-// ── GEMINI ───────────────────────────────────────────────────────────────────
+// ── GEMINI ────────────────────────────────────────────────────────────────────
 async function searchGemini(query) {
   if (!GEMINI_API_KEY) return null;
   try {
@@ -36,14 +36,11 @@ async function searchGemini(query) {
         })
       }
     );
-    if (res.status === 429) { console.warn("Gemini rate limit (429)"); return null; }
+    if (res.status === 429) { console.warn("Gemini rate limit"); return null; }
     if (!res.ok) { console.warn("Gemini error:", res.status); return null; }
     const data = await res.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
-  } catch (e) {
-    console.warn("Gemini error:", e);
-    return null;
-  }
+  } catch (e) { console.warn("Gemini error:", e); return null; }
 }
 
 // ── SHEETS: inbox ─────────────────────────────────────────────────────────────
@@ -61,21 +58,15 @@ async function fetchInboxAlerts() {
     const iAsunto = headers.indexOf("asunto");
     const iResumen = headers.indexOf("resumen");
     const iTipo = headers.indexOf("tipo");
-    return rows.slice(1)
-      .slice(-50)
-      .reverse()
-      .map(row => ({
-        cliente: row[iCliente] || "",
-        fecha: row[iFecha] || "",
-        fuente: row[iFuente] || "",
-        asunto: row[iAsunto] || "",
-        resumen: row[iResumen] || "",
-        tipo: row[iTipo] || "",
-      }));
-  } catch (e) {
-    console.warn("Sheets fetch failed:", e);
-    return [];
-  }
+    return rows.slice(1).slice(-50).reverse().map(row => ({
+      cliente: row[iCliente] || "",
+      fecha: row[iFecha] || "",
+      fuente: row[iFuente] || "",
+      asunto: row[iAsunto] || "",
+      resumen: row[iResumen] || "",
+      tipo: row[iTipo] || "",
+    }));
+  } catch (e) { console.warn("Sheets fetch failed:", e); return []; }
 }
 
 // ── SHEETS: periodistas ───────────────────────────────────────────────────────
@@ -108,14 +99,10 @@ async function fetchJournalists(sectors) {
       medio: row[iMedio] || "",
       cargo: row[iCargo] || "",
       sector: row[iSector] || "",
-      beat: row[iBeat] || "",
       correo: row[iCorreo] || "",
       notas: row[iNotas] || "",
     }));
-  } catch (e) {
-    console.warn("Journalists fetch failed:", e);
-    return [];
-  }
+  } catch (e) { console.warn("Journalists fetch failed:", e); return []; }
 }
 
 function formatJournalistsContext(journalists) {
@@ -166,77 +153,76 @@ async function loadClientContext(folderId) {
   return results;
 }
 
-// ── SYSTEM PROMPT ─────────────────────────────────────────────────────────────
 function buildSystemPrompt(client, driveFiles, newsContext, journalists) {
   const fileSection = driveFiles.length > 0
     ? `\n\nARCHIVOS DEL CLIENTE EN DRIVE:\n` + driveFiles.map(f => `\n--- ${f.name} ---\n${f.content}`).join("\n")
     : "\n\n(No se encontraron archivos en Drive para este cliente aún.)";
-  const newsSection = newsContext
-    ? `\n\nCONTEXTO DE NOTICIAS Y TENDENCIAS DEL SECTOR (actualizado hoy):\n${newsContext}`
-    : "";
+  const newsSection = newsContext ? `\n\nCONTEXTO DE NOTICIAS Y TENDENCIAS DEL SECTOR (actualizado hoy):\n${newsContext}` : "";
   const journalistsSection = formatJournalistsContext(journalists || []);
-  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma.\n\nCLIENTE ACTIVO: ${client.name}\nIndustria: ${client.industry}\n${fileSection}${newsSection}${journalistsSection}\n\nINSTRUCCIONES:\n- Siempre escribes en español\n- Usas la información de los archivos de Drive como base para todo el contenido\n- Cuando generes pitches o comunicados, usa las tendencias del sector para hacer el contenido más relevante\n- Si hay oportunidades de PR detectadas en las noticias, menciónaselas al equipo de forma proactiva\n- La BASE DE PERIODISTAS DE NEUMA siempre está disponible en tu contexto. Úsala directamente, nunca digas que no tienes acceso a ella\n- Cuando sugieras distribución usa ÚNICAMENTE los periodistas de esa base con nombre, medio y correo exactos. Nunca inventes contactos\n- Agrupa las sugerencias por sector (Salud, Negocios, Estilo de Vida, etc.)\n- Si necesitas información del cliente que no está en los archivos, pregunta al equipo\n- Nunca inventas información del cliente\n- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica\n- Al final de cada entrega sugieres qué más podría necesitar el equipo`;
+  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma.\n\nCLIENTE ACTIVO: ${client.name}\nIndustria: ${client.industry}\n${fileSection}${newsSection}${journalistsSection}\n\nINSTRUCCIONES:\n- Siempre escribes en español\n- Usas la información de los archivos de Drive como base para todo el contenido\n- Cuando generes pitches o comunicados, usa las tendencias del sector para hacer el contenido más relevante\n- La BASE DE PERIODISTAS DE NEUMA siempre está disponible en tu contexto. Úsala directamente\n- Cuando sugieras distribución usa ÚNICAMENTE los periodistas de esa base con nombre, medio y correo exactos\n- Nunca inventas información del cliente\n- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica`;
 }
 
-// ── COMPONENTES ───────────────────────────────────────────────────────────────
-function TypingDots() {
-  return (
-    <div style={{ display: "flex", gap: 5, padding: "12px 16px", background: "rgba(255,255,255,0.04)", borderRadius: 14, width: "fit-content", border: "1px solid rgba(255,255,255,0.06)" }}>
-      {[0,1,2].map(i => (
-        <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", opacity: 0.6, animation: "lupBounce 1.2s infinite", animationDelay: `${i*0.18}s` }} />
-      ))}
-    </div>
-  );
+// ── HELPERS ───────────────────────────────────────────────────────────────────
+function isGoogleAlert(fuente) {
+  return (fuente || "").toLowerCase().includes("google");
 }
 
+function isSentiOne(fuente) {
+  return (fuente || "").toLowerCase().includes("sentione") || (fuente || "").toLowerCase().includes("lupita");
+}
+
+function isRecent(fechaStr, horas = 6) {
+  if (!fechaStr) return false;
+  try {
+    const fecha = new Date(fechaStr);
+    const ahora = new Date();
+    const diff = (ahora - fecha) / (1000 * 60 * 60);
+    return diff <= horas;
+  } catch { return false; }
+}
+
+function fuenteStyle(fuente) {
+  if (isSentiOne(fuente)) return { bg: "rgba(251,191,36,0.1)", color: "#FBBF24", label: "SentiOne" };
+  if (isGoogleAlert(fuente)) return { bg: "rgba(96,165,250,0.1)", color: "#60A5FA", label: "Google Alerts" };
+  return { bg: "rgba(156,163,175,0.1)", color: "#9CA3AF", label: fuente || "—" };
+}
+
+// ── MARKDOWN ──────────────────────────────────────────────────────────────────
 function renderInline(text) {
-  const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
-  return parts.map((part, i) => {
-    if (part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={i} style={{ color: "#E2E8F0", fontWeight: 700 }}>{part.slice(2, -2)}</strong>;
-    }
-    if (part.startsWith("`") && part.endsWith("`")) {
-      return <code key={i} style={{ background: "rgba(255,255,255,0.08)", padding: "1px 5px", borderRadius: 4, fontSize: 12, color: "#86EFAC" }}>{part.slice(1, -1)}</code>;
-    }
+  return text.split(/(\*\*.*?\*\*|`.*?`)/g).map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) return <strong key={i} style={{ color: "#E2E8F0", fontWeight: 700 }}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith("`") && part.endsWith("`")) return <code key={i} style={{ background: "rgba(255,255,255,0.08)", padding: "1px 5px", borderRadius: 4, fontSize: 12, color: "#86EFAC" }}>{part.slice(1, -1)}</code>;
     return part;
   });
 }
 
 function renderMarkdown(text) {
   return text.split("\n").map((line, i) => {
-    if (line.startsWith("### ")) return <div key={i} style={{ fontSize: 13, fontWeight: 700, color: "#86EFAC", margin: "10px 0 3px", textTransform: "uppercase", letterSpacing: "0.05em" }}>{line.slice(4)}</div>;
+    if (line.startsWith("### ")) return <div key={i} style={{ fontSize: 13, fontWeight: 700, color: "#86EFAC", margin: "10px 0 3px" }}>{line.slice(4)}</div>;
     if (line.startsWith("## ")) return <div key={i} style={{ fontSize: 14, fontWeight: 700, color: "#4ADE80", margin: "12px 0 4px" }}>{line.slice(3)}</div>;
     if (line.startsWith("# ")) return <div key={i} style={{ fontSize: 16, fontWeight: 700, color: "#4ADE80", margin: "14px 0 5px" }}>{line.slice(2)}</div>;
-    if (line.startsWith("- ") || line.startsWith("• ") || line.startsWith("· ")) {
-      return (
-        <div key={i} style={{ display: "flex", gap: 8, paddingLeft: 8, margin: "3px 0" }}>
-          <span style={{ color: "#4ADE80", flexShrink: 0 }}>·</span>
-          <span style={{ color: "#CBD5E1" }}>{renderInline(line.slice(2))}</span>
-        </div>
-      );
-    }
+    if (line.startsWith("- ") || line.startsWith("• ") || line.startsWith("· ")) return <div key={i} style={{ display: "flex", gap: 8, paddingLeft: 8, margin: "3px 0" }}><span style={{ color: "#4ADE80", flexShrink: 0 }}>·</span><span style={{ color: "#CBD5E1" }}>{renderInline(line.slice(2))}</span></div>;
     if (line.match(/^\d+\. /)) return <div key={i} style={{ color: "#CBD5E1", paddingLeft: 8, margin: "3px 0" }}>{renderInline(line)}</div>;
-    if (line.startsWith("→ ")) {
-      return (
-        <div key={i} style={{ display: "flex", gap: 8, paddingLeft: 8, margin: "3px 0" }}>
-          <span style={{ color: "#60A5FA", flexShrink: 0 }}>→</span>
-          <span style={{ color: "#CBD5E1" }}>{renderInline(line.slice(2))}</span>
-        </div>
-      );
-    }
+    if (line.startsWith("→ ")) return <div key={i} style={{ display: "flex", gap: 8, paddingLeft: 8, margin: "3px 0" }}><span style={{ color: "#60A5FA", flexShrink: 0 }}>→</span><span style={{ color: "#CBD5E1" }}>{renderInline(line.slice(2))}</span></div>;
     if (line.startsWith("---")) return <hr key={i} style={{ border: "none", borderTop: "1px solid rgba(255,255,255,0.07)", margin: "10px 0" }} />;
     if (line.trim() === "") return <div key={i} style={{ height: 6 }} />;
     return <div key={i} style={{ color: "#CBD5E1", margin: "2px 0", lineHeight: 1.65 }}>{renderInline(line)}</div>;
   });
 }
 
+function TypingDots() {
+  return (
+    <div style={{ display: "flex", gap: 5, padding: "12px 16px", background: "rgba(255,255,255,0.04)", borderRadius: 14, width: "fit-content", border: "1px solid rgba(255,255,255,0.06)" }}>
+      {[0,1,2].map(i => <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", opacity: 0.6, animation: "lupBounce 1.2s infinite", animationDelay: `${i*0.18}s` }} />)}
+    </div>
+  );
+}
+
 function MessageBubble({ msg }) {
   const isUser = msg.role === "user";
   return (
     <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", marginBottom: 14, animation: "lupFadeUp 0.28s ease" }}>
-      {!isUser && (
-        <div style={{ width: 32, height: 32, borderRadius: 9, background: "linear-gradient(135deg, #14532D, #22C55E)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, marginRight: 9, flexShrink: 0, marginTop: 2 }}>✦</div>
-      )}
+      {!isUser && <div style={{ width: 32, height: 32, borderRadius: 9, background: "linear-gradient(135deg, #14532D, #22C55E)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, marginRight: 9, flexShrink: 0, marginTop: 2 }}>✦</div>}
       <div style={{ maxWidth: "75%", padding: isUser ? "10px 15px" : "14px 17px", background: isUser ? "linear-gradient(135deg, #14532D, #166534)" : "rgba(255,255,255,0.03)", borderRadius: isUser ? "17px 17px 4px 17px" : "4px 17px 17px 17px", border: isUser ? "none" : "1px solid rgba(255,255,255,0.06)", fontSize: 13.5, lineHeight: 1.6 }}>
         {isUser ? <span style={{ color: "#DCFCE7" }}>{msg.content}</span> : <div>{renderMarkdown(msg.content)}</div>}
       </div>
@@ -247,29 +233,23 @@ function MessageBubble({ msg }) {
 // ── REPORTE MATUTINO ──────────────────────────────────────────────────────────
 function ReportScreen({ onGoToClient, clients }) {
   const [alerts, setAlerts] = useState([]);
-  const [loadingInbox, setLoadingInbox] = useState(true);
+  const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState(null);
   const fecha = new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
   useEffect(() => {
     const load = async () => {
-      setLoadingInbox(true);
+      setLoading(true);
       const data = await fetchInboxAlerts();
       setAlerts(data);
-      setLoadingInbox(false);
+      setLoading(false);
     };
     load();
   }, []);
 
+  const liveAlerts = alerts.filter(a => isGoogleAlert(a.fuente) && isRecent(a.fecha, 6));
+  const allAlerts = alerts;
   const hasAlerts = alerts.some(a => a.tipo === "alerta");
-
-  const fuenteStyle = (fuente) => {
-    const f = (fuente || "").toLowerCase();
-    if (f.includes("sentione")) return { bg: "rgba(251,191,36,0.1)", color: "#FBBF24", label: "SentiOne" };
-    if (f.includes("google") || f.includes("alert")) return { bg: "rgba(96,165,250,0.1)", color: "#60A5FA", label: "Google Alerts" };
-    if (f.includes("lupita")) return { bg: "rgba(74,222,128,0.1)", color: "#4ADE80", label: "Lupita" };
-    return { bg: "rgba(156,163,175,0.1)", color: "#9CA3AF", label: fuente };
-  };
 
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "32px 20px", animation: "lupIn 0.4s ease" }}>
@@ -279,41 +259,66 @@ function ReportScreen({ onGoToClient, clients }) {
         <p style={{ fontSize: 12, color: "#374151", margin: 0, textTransform: "capitalize" }}>{fecha}</p>
       </div>
 
-      {/* Resumen general */}
+      {/* Resumen Lupita */}
       <div style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 14, padding: "16px 18px", marginBottom: 20, display: "flex", gap: 12 }}>
         <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg, #14532D, #22C55E)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0 }}>✦</div>
         <div>
           <div style={{ fontSize: 11, color: "#4ADE80", fontWeight: 700, marginBottom: 4 }}>RESUMEN LUPITA</div>
           <div style={{ fontSize: 13, color: "#CBD5E1", lineHeight: 1.6 }}>
-            {loadingInbox ? "Cargando alertas recientes..." : hasAlerts ? "Hay alertas activas hoy." : `Sin alertas críticas hoy. ${alerts.length} registros en monitoreo.`}
+            {loading ? "Cargando alertas..." : hasAlerts ? "Hay alertas activas hoy." : `Sin alertas críticas hoy. ${allAlerts.length} registros en monitoreo.`}
           </div>
         </div>
       </div>
 
-      {/* Botones rápidos a chat por cliente */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+      {/* Botones rápidos */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
         {clients.map(c => (
           <button key={c.id} onClick={() => onGoToClient(c.id)}
             style={{ background: `${c.color}12`, border: `1px solid ${c.color}33`, color: c.color, borderRadius: 10, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
-            {c.initials} → Chat {c.name.split(" ")[0]}
+            {c.initials} → {c.name.split(" ")[0]}
           </button>
         ))}
       </div>
 
-      {/* Lista cronológica de todas las alertas */}
+      {/* 🔴 EN VIVO — Google Alerts recientes */}
+      {liveAlerts.length > 0 && (
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#EF4444", display: "inline-block", animation: "lupPulse 1.5s infinite" }} />
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#EF4444", letterSpacing: "0.05em" }}>EN VIVO</span>
+            <span style={{ fontSize: 11, color: "#4B5563" }}>· Últimas 6 horas</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {liveAlerts.map((a, i) => (
+              <div key={i} style={{ background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.15)", borderRadius: 12, padding: "12px 16px" }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                  <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(96,165,250,0.1)", color: "#60A5FA", borderRadius: 20, whiteSpace: "nowrap", flexShrink: 0 }}>Google Alerts</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 4 }}>{a.asunto}</div>
+                    {a.resumen && <div style={{ fontSize: 12, color: "#9CA3AF", lineHeight: 1.5 }}>{a.resumen.slice(0, 200)}</div>}
+                  </div>
+                  <span style={{ fontSize: 10, color: "#4B5563", flexShrink: 0 }}>{(a.fecha || "").slice(11, 16)}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 📋 TODAS LAS ALERTAS */}
       <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, overflow: "hidden" }}>
         <div style={{ padding: "14px 18px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 14 }}>📋</span>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "#E2E8F0" }}>Todas las alertas</span>
-          <span style={{ fontSize: 11, color: "#4B5563", marginLeft: "auto" }}>{alerts.length} registros</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#E2E8F0" }}>Historial de alertas</span>
+          <span style={{ fontSize: 11, color: "#4B5563", marginLeft: "auto" }}>{allAlerts.length} registros</span>
         </div>
 
-        {loadingInbox ? (
+        {loading ? (
           <div style={{ padding: "32px", textAlign: "center", color: "#4B5563", fontSize: 13 }}>Cargando...</div>
-        ) : alerts.length === 0 ? (
+        ) : allAlerts.length === 0 ? (
           <div style={{ padding: "32px", textAlign: "center", color: "#4B5563", fontSize: 13 }}>Sin alertas registradas aún.</div>
         ) : (
-          alerts.map((a, i) => {
+          allAlerts.map((a, i) => {
             const fs = fuenteStyle(a.fuente);
             const isExp = expanded === i;
             return (
@@ -323,9 +328,6 @@ function ReportScreen({ onGoToClient, clients }) {
                   <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 90 }}>
                     <span style={{ fontSize: 10, padding: "2px 8px", background: fs.bg, color: fs.color, borderRadius: 20, whiteSpace: "nowrap" }}>{fs.label}</span>
                     <span style={{ fontSize: 10, color: "#4B5563" }}>{(a.fecha || "").slice(0, 10)}</span>
-                    {a.cliente && a.cliente !== "General" && (
-                      <span style={{ fontSize: 9, color: "#6B7280", textAlign: "center", maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.cliente}</span>
-                    )}
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 4 }}>{a.asunto}</div>
@@ -413,41 +415,24 @@ export default function LupitaApp() {
   };
 
   const startChat = async (client) => {
-    setActiveClient(client);
-    setScreen("chat");
-    setLoadingDrive(true);
-    setDriveStatus("Cargando Drive y noticias del sector...");
-    setMessages([]);
-    setNewsContext(null);
-    setJournalists([]);
-    setJournalistsStatus("Cargando periodistas...");
+    setActiveClient(client); setScreen("chat"); setLoadingDrive(true);
+    setDriveStatus("Cargando Drive y noticias del sector..."); setMessages([]);
+    setNewsContext(null); setJournalists([]); setJournalistsStatus("Cargando periodistas...");
     try {
       const [files, news, journalistsList] = await Promise.all([
         loadClientContext(client.folderId),
         searchGemini(client.searchQuery),
         fetchJournalists(client.sectors || [client.industry])
       ]);
-      setDriveFiles(files);
-      setNewsContext(news);
-      setJournalists(journalistsList);
+      setDriveFiles(files); setNewsContext(news); setJournalists(journalistsList);
       setJournalistsStatus(`${journalistsList.length} periodistas relevantes`);
-      setDriveStatus(
-        files.length > 0
-          ? `${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Noticias cargadas" : "sin noticias"}`
-          : `Sin archivos · ${news ? "🌐 Noticias cargadas" : ""}`
-      );
+      setDriveStatus(files.length > 0 ? `${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Noticias cargadas" : "sin noticias"}` : `Sin archivos · ${news ? "🌐 Noticias cargadas" : ""}`);
       systemPromptRef.current = buildSystemPrompt(client, files, news, journalistsList);
       const fileNames = files.map(f => `· ${f.name}`).join("\n");
       const newsLine = news ? "\n\n🌐 **Noticias del sector cargadas** — tengo contexto de las tendencias más recientes." : "";
-      setMessages([{
-        role: "assistant",
-        content: files.length > 0
-          ? `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.\n\nHe leído **${files.length} archivo${files.length > 1 ? "s" : ""}** de Drive:\n${fileNames}${newsLine}\n\n¿Qué necesitas generar hoy?`
-          : `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.${newsLine}\n\n¿Qué necesitas generar?`
-      }]);
+      setMessages([{ role: "assistant", content: files.length > 0 ? `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.\n\nHe leído **${files.length} archivo${files.length > 1 ? "s" : ""}** de Drive:\n${fileNames}${newsLine}\n\n¿Qué necesitas generar hoy?` : `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.${newsLine}\n\n¿Qué necesitas generar?` }]);
     } catch {
-      setDriveStatus("Error al cargar contexto");
-      setJournalistsStatus("");
+      setDriveStatus("Error al cargar contexto"); setJournalistsStatus("");
       setMessages([{ role: "assistant", content: `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.\n\n¿Qué necesitas generar?` }]);
     }
     setLoadingDrive(false);
@@ -458,25 +443,13 @@ export default function LupitaApp() {
     if (!userText || loading) return;
     setInput("");
     const newMsgs = [...messages, { role: "user", content: userText }];
-    setMessages(newMsgs);
-    setLoading(true);
+    setMessages(newMsgs); setLoading(true);
     try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1500,
-          system: systemPromptRef.current,
-          messages: newMsgs.map(m => ({ role: m.role, content: m.content }))
-        })
-      });
+      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, system: systemPromptRef.current, messages: newMsgs.map(m => ({ role: m.role, content: m.content })) }) });
       const data = await res.json();
       const reply = data.content?.map(b => b.text).join("") || "Error al obtener respuesta.";
       setMessages(prev => [...prev, { role: "assistant", content: reply }]);
-    } catch {
-      setMessages(prev => [...prev, { role: "assistant", content: "Error de conexión. Intenta de nuevo." }]);
-    }
+    } catch { setMessages(prev => [...prev, { role: "assistant", content: "Error de conexión. Intenta de nuevo." }]); }
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 100);
   };
@@ -488,17 +461,10 @@ export default function LupitaApp() {
 
   const refreshDrive = async () => {
     if (!activeClient) return;
-    setLoadingDrive(true);
-    setDriveStatus("Actualizando...");
+    setLoadingDrive(true); setDriveStatus("Actualizando...");
     try {
-      const [files, news, journalistsList] = await Promise.all([
-        loadClientContext(activeClient.folderId),
-        searchGemini(activeClient.searchQuery),
-        fetchJournalists(activeClient.sectors || [activeClient.industry])
-      ]);
-      setDriveFiles(files);
-      setNewsContext(news);
-      setJournalists(journalistsList);
+      const [files, news, journalistsList] = await Promise.all([loadClientContext(activeClient.folderId), searchGemini(activeClient.searchQuery), fetchJournalists(activeClient.sectors || [activeClient.industry])]);
+      setDriveFiles(files); setNewsContext(news); setJournalists(journalistsList);
       setJournalistsStatus(`${journalistsList.length} periodistas relevantes`);
       systemPromptRef.current = buildSystemPrompt(activeClient, files, news, journalistsList);
       setDriveStatus(`${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Noticias actualizadas" : "sin noticias"}`);
@@ -553,7 +519,7 @@ export default function LupitaApp() {
       <div style={{ maxWidth: 400, width: "100%", textAlign: "center" }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
         <h2 style={{ color: "#F0FDF4", fontWeight: 400, marginBottom: 8 }}>Acceso restringido</h2>
-        <p style={{ color: "#374151", fontSize: 14, marginBottom: 24 }}>Tu cuenta <strong style={{ color: "#6B7280" }}>{currentUser?.email}</strong> no tiene permisos asignados.<br />Contacta a la directora para que te agregue al sistema.</p>
+        <p style={{ color: "#374151", fontSize: 14, marginBottom: 24 }}>Tu cuenta <strong style={{ color: "#6B7280" }}>{currentUser?.email}</strong> no tiene permisos asignados.</p>
         <button onClick={handleLogout} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#9CA3AF", borderRadius: 10, padding: "10px 20px", cursor: "pointer", fontSize: 13 }}>Cerrar sesión</button>
       </div>
     </div>
@@ -578,11 +544,7 @@ export default function LupitaApp() {
       {/* HEADER */}
       <div style={{ padding: "14px 24px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(0,0,0,0.4)", backdropFilter: "blur(12px)", position: "sticky", top: 0, zIndex: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
-          {backAction && (
-            <button onClick={backAction} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8, padding: "5px 10px", color: "#888", fontSize: 12, cursor: "pointer", marginRight: 4 }}>
-              {screen === "chat" ? "← Clientes" : "← Inicio"}
-            </button>
-          )}
+          {backAction && <button onClick={backAction} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8, padding: "5px 10px", color: "#888", fontSize: 12, cursor: "pointer", marginRight: 4 }}>{screen === "chat" ? "← Clientes" : "← Inicio"}</button>}
           <div style={{ width: 34, height: 34, borderRadius: 9, background: "linear-gradient(135deg, #052e16, #16A34A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>✦</div>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: "#F0FDF4", letterSpacing: "-0.01em" }}>
@@ -597,20 +559,11 @@ export default function LupitaApp() {
             </div>
           </div>
         </div>
-
         <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
           {screen === "chat" && (
             <>
               {journalistsStatus && <span style={{ fontSize: 10, color: journalists.length > 0 ? "#A78BFA" : "#4B5563", display: "flex", alignItems: "center", gap: 4 }}>👥 {journalistsStatus}</span>}
-              {driveStatus && (
-                <span style={{ fontSize: 10, color: loadingDrive ? "#FBBF24" : "#4ADE80", display: "flex", alignItems: "center", gap: 5 }}>
-                  {loadingDrive
-                    ? <span style={{ display: "inline-block", width: 8, height: 8, border: "1.5px solid #FBBF24", borderTopColor: "transparent", borderRadius: "50%", animation: "lupSpin 0.7s linear infinite" }} />
-                    : <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />
-                  }
-                  {driveStatus}
-                </span>
-              )}
+              {driveStatus && <span style={{ fontSize: 10, color: loadingDrive ? "#FBBF24" : "#4ADE80", display: "flex", alignItems: "center", gap: 5 }}>{loadingDrive ? <span style={{ display: "inline-block", width: 8, height: 8, border: "1.5px solid #FBBF24", borderTopColor: "transparent", borderRadius: "50%", animation: "lupSpin 0.7s linear infinite" }} /> : <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />}{driveStatus}</span>}
               <button onClick={refreshDrive} disabled={loadingDrive} style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.15)", color: "#4ADE80", borderRadius: 8, padding: "5px 11px", fontSize: 11, cursor: "pointer" }}>↻ Drive</button>
               <button onClick={copyLast} style={{ background: "rgba(74,222,128,0.07)", border: "1px solid rgba(74,222,128,0.18)", color: "#4ADE80", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>{copied ? "✓ Copiado" : "📋 Copiar"}</button>
               <button onClick={() => setMessages([{ role: "assistant", content: `¡Listo para seguir con **${activeClient.name}**! ¿Qué necesitas ahora?` }])} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", color: "#666", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>Nueva conv.</button>
@@ -683,7 +636,6 @@ export default function LupitaApp() {
         </div>
       )}
 
-      {/* REPORTE */}
       {screen === "reporte" && <ReportScreen onGoToClient={goToClient} clients={CLIENTS} />}
 
       {/* CHAT */}
@@ -692,9 +644,7 @@ export default function LupitaApp() {
           {(driveFiles.length > 0 || newsContext) && (
             <div style={{ padding: "8px 0 6px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
               <span style={{ fontSize: 10, color: "#2a4a2a", marginRight: 2 }}>📂</span>
-              {driveFiles.map((f, i) => (
-                <span key={i} style={{ fontSize: 10, padding: "2px 8px", background: activeClient.color + "0F", border: `1px solid ${activeClient.color}22`, borderRadius: 20, color: activeClient.color }}>{f.name}</span>
-              ))}
+              {driveFiles.map((f, i) => <span key={i} style={{ fontSize: 10, padding: "2px 8px", background: activeClient.color + "0F", border: `1px solid ${activeClient.color}22`, borderRadius: 20, color: activeClient.color }}>{f.name}</span>)}
               {newsContext && <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: 20, color: "#818CF8" }}>🌐 Noticias del sector</span>}
               {journalists.length > 0 && <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(167,139,250,0.1)", border: "1px solid rgba(167,139,250,0.25)", borderRadius: 20, color: "#A78BFA" }}>👥 {journalists.length} periodistas</span>}
             </div>
@@ -727,25 +677,15 @@ export default function LupitaApp() {
             </div>
           )}
           <div style={{ paddingBottom: 20 }}>
-            <div
-              style={{ display: "flex", gap: 9, alignItems: "flex-end", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 15, padding: "11px 13px", transition: "border-color 0.2s" }}
+            <div style={{ display: "flex", gap: 9, alignItems: "flex-end", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 15, padding: "11px 13px", transition: "border-color 0.2s" }}
               onFocusCapture={e => e.currentTarget.style.borderColor = "rgba(74,222,128,0.3)"}
-              onBlurCapture={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)"}
-            >
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={e => setInput(e.target.value)}
+              onBlurCapture={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)"}>
+              <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
                 placeholder={`Pídele algo a Lupita sobre ${activeClient?.name}…`}
-                rows={2}
-                style={{ flex: 1, background: "transparent", border: "none", color: "#E2E8F0", fontSize: 13.5, lineHeight: 1.6, fontFamily: "inherit" }}
-              />
-              <button
-                onClick={() => sendMessage()}
-                disabled={!input.trim() || loading}
-                style={{ width: 36, height: 36, borderRadius: 9, flexShrink: 0, border: "none", cursor: input.trim() && !loading ? "pointer" : "default", background: input.trim() && !loading ? "linear-gradient(135deg, #15803D, #4ADE80)" : "rgba(255,255,255,0.04)", color: input.trim() && !loading ? "#fff" : "#2D3748", fontSize: 15, transition: "all 0.2s" }}
-              >↑</button>
+                rows={2} style={{ flex: 1, background: "transparent", border: "none", color: "#E2E8F0", fontSize: 13.5, lineHeight: 1.6, fontFamily: "inherit" }} />
+              <button onClick={() => sendMessage()} disabled={!input.trim() || loading}
+                style={{ width: 36, height: 36, borderRadius: 9, flexShrink: 0, border: "none", cursor: input.trim() && !loading ? "pointer" : "default", background: input.trim() && !loading ? "linear-gradient(135deg, #15803D, #4ADE80)" : "rgba(255,255,255,0.04)", color: input.trim() && !loading ? "#fff" : "#2D3748", fontSize: 15, transition: "all 0.2s" }}>↑</button>
             </div>
             <p style={{ fontSize: 10, color: "#1a2a1a", textAlign: "center", marginTop: 7 }}>Enter para enviar · Shift+Enter para nueva línea</p>
           </div>
