@@ -58,12 +58,15 @@ async function fetchInboxAlerts() {
 
 async function saveToMemory(sheet, row) {
   try {
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${MEMORY_SHEET_ID}/values/${encodeURIComponent(sheet)}:append?valueInputOption=USER_ENTERED&key=${GOOGLE_API_KEY}`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ values: [row] })
+    const res = await fetch("https://hook.eu1.make.com/ddwic3f7m54545tz5r1q5m8svbcysoxx", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sheet, row })
     });
     return res.ok;
   } catch { return false; }
 }
+
 
 async function fetchJournalists(sectors) {
   try {
