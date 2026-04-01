@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 
 const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -22,193 +22,128 @@ const ACTIONS = [
   { id: "crisis", icon: "⚠️", label: "Crisis statement", color: "#FB923C", tipo: null, prompt: (c) => `Necesito un crisis statement para ${c.name}. ¿Cuáles son los detalles de la situación?` },
 ];
 
-// ── GEMINI ────────────────────────────────────────────────────────────────────
+// ── API FUNCTIONS ─────────────────────────────────────────────────────────────
+
 async function searchGemini(query) {
   if (!GEMINI_API_KEY) return null;
   try {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: `Eres un asistente de investigación para una agencia de relaciones públicas en México.\n\nBusca y resume las noticias y tendencias más recientes (últimas 2 semanas) sobre: ${query}\n\nResponde en español con este formato exacto:\nTENDENCIAS DEL SECTOR:\n[3-5 tendencias o noticias relevantes, una por línea, comenzando con •]\n\nOPORTUNIDADES DE PR:\n[2-3 oportunidades concretas de relaciones públicas basadas en estas tendencias, una por línea, comenzando con →]\n\nSé específico y conciso. Máximo 300 palabras en total.` }] }],
-          generationConfig: { maxOutputTokens: 500, temperature: 0.3 }
-        })
-      }
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: `Eres un asistente de investigación para una agencia de relaciones públicas en México. Busca y resume las noticias más recientes sobre: ${query}. Responde en español con TENDENCIAS DEL SECTOR y OPORTUNIDADES DE PR. Máximo 300 palabras.` }] }], generationConfig: { maxOutputTokens: 500, temperature: 0.3 } }) }
     );
     if (res.status === 429) { console.warn("Gemini rate limit"); return null; }
-    if (!res.ok) { console.warn("Gemini error:", res.status); return null; }
+    if (!res.ok) return null;
     const data = await res.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
-  } catch (e) { console.warn("Gemini error:", e); return null; }
+  } catch (e) { return null; }
 }
 
-// ── SHEETS: inbox ─────────────────────────────────────────────────────────────
 async function fetchInboxAlerts() {
   try {
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${INBOX_SHEET_ID}/values/Inbox%20General?key=${GOOGLE_API_KEY}`;
-    const res = await fetch(url);
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${INBOX_SHEET_ID}/values/Inbox%20General?key=${GOOGLE_API_KEY}`);
     const data = await res.json();
     const rows = data.values || [];
     if (rows.length < 2) return [];
-    const headers = rows[0].map(h => h.toLowerCase());
-    const iCliente = headers.indexOf("cliente");
-    const iFecha = headers.indexOf("fecha");
-    const iFuente = headers.indexOf("fuente");
-    const iAsunto = headers.indexOf("asunto");
-    const iResumen = headers.indexOf("resumen");
-    const iTipo = headers.indexOf("tipo");
-    return rows.slice(1).slice(-50).reverse().map(row => ({
-      cliente: row[iCliente] || "",
-      fecha: row[iFecha] || "",
-      fuente: row[iFuente] || "",
-      asunto: row[iAsunto] || "",
-      resumen: row[iResumen] || "",
-      tipo: row[iTipo] || "",
+    const h = rows[0].map(x => x.toLowerCase());
+    return rows.slice(1).slice(-50).reverse().map(r => ({
+      cliente: r[h.indexOf("cliente")] || "",
+      fecha: r[h.indexOf("fecha")] || "",
+      fuente: r[h.indexOf("fuente")] || "",
+      asunto: r[h.indexOf("asunto")] || "",
+      resumen: r[h.indexOf("resumen")] || "",
+      tipo: r[h.indexOf("tipo")] || "",
     }));
-  } catch (e) { console.warn("Sheets fetch failed:", e); return []; }
+  } catch { return []; }
 }
 
-// ── MEMORY: guardar en Sheets ─────────────────────────────────────────────────
 async function saveToMemory(sheet, row) {
   try {
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${MEMORY_SHEET_ID}/values/${encodeURIComponent(sheet)}:append?valueInputOption=USER_ENTERED&key=${GOOGLE_API_KEY}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ values: [row] })
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${MEMORY_SHEET_ID}/values/${encodeURIComponent(sheet)}:append?valueInputOption=USER_ENTERED&key=${GOOGLE_API_KEY}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ values: [row] })
     });
     return res.ok;
-  } catch (e) { console.warn("Memory save failed:", e); return false; }
+  } catch { return false; }
 }
 
-// ── SHEETS: periodistas ───────────────────────────────────────────────────────
 async function fetchJournalists(sectors) {
   try {
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${JOURNALISTS_SHEET_ID}/values/Directorio?key=${GOOGLE_API_KEY}`;
-    const res = await fetch(url);
+    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${JOURNALISTS_SHEET_ID}/values/Directorio?key=${GOOGLE_API_KEY}`);
     if (!res.ok) return [];
     const data = await res.json();
     const rows = data.values || [];
     if (rows.length < 2) return [];
-    const headers = rows[0].map(h => (h || "").toLowerCase().trim());
-    const iNombre = headers.indexOf("nombre");
-    const iMedio = headers.indexOf("medio");
-    const iCargo = headers.indexOf("cargo");
-    const iSector = headers.indexOf("sector");
-    const iBeat = headers.indexOf("beat");
-    const iCorreo = headers.indexOf("correo");
-    const iEstado = headers.indexOf("estado");
-    const iNotas = headers.indexOf("notas");
-    return rows.slice(1).filter(row => {
-      if (!row[iNombre] || !row[iMedio]) return false;
-      if ((row[iEstado] || "").toLowerCase() === "baja") return false;
-      if (!sectors || sectors.length === 0) return true;
-      const sector = (row[iSector] || "").toLowerCase();
-      const beat = (row[iBeat] || "").toLowerCase();
-      return sectors.some(s => sector.includes(s) || beat.includes(s));
-    }).map(row => ({
-      nombre: row[iNombre] || "",
-      medio: row[iMedio] || "",
-      cargo: row[iCargo] || "",
-      sector: row[iSector] || "",
-      correo: row[iCorreo] || "",
-      notas: row[iNotas] || "",
-    }));
-  } catch (e) { console.warn("Journalists fetch failed:", e); return []; }
+    const h = rows[0].map(x => (x || "").toLowerCase().trim());
+    const iN = h.indexOf("nombre"), iM = h.indexOf("medio"), iCa = h.indexOf("cargo");
+    const iS = h.indexOf("sector"), iB = h.indexOf("beat"), iCo = h.indexOf("correo");
+    const iE = h.indexOf("estado"), iNo = h.indexOf("notas");
+    return rows.slice(1).filter(r => {
+      if (!r[iN] || !r[iM]) return false;
+      if ((r[iE] || "").toLowerCase() === "baja") return false;
+      if (!sectors || !sectors.length) return true;
+      return sectors.some(s => (r[iS] || "").toLowerCase().includes(s) || (r[iB] || "").toLowerCase().includes(s));
+    }).map(r => ({ nombre: r[iN] || "", medio: r[iM] || "", cargo: r[iCa] || "", sector: r[iS] || "", correo: r[iCo] || "", notas: r[iNo] || "" }));
+  } catch { return []; }
 }
 
-function formatJournalistsContext(journalists) {
-  if (!journalists || journalists.length === 0) return "";
-  const byMedio = {};
-  journalists.forEach(j => {
-    if (!byMedio[j.medio]) byMedio[j.medio] = [];
-    byMedio[j.medio].push(j);
-  });
-  let ctx = `\n\nBASE DE PERIODISTAS RELEVANTES (${journalists.length} contactos):\n`;
-  Object.entries(byMedio).slice(0, 30).forEach(([medio, js]) => {
-    ctx += `\n${medio}:\n`;
-    js.forEach(j => {
-      ctx += `  · ${j.nombre} | ${j.cargo}`;
-      if (j.correo) ctx += ` | ${j.correo}`;
-      if (j.notas) ctx += ` | Nota: ${j.notas}`;
-      ctx += "\n";
-    });
-  });
-  return ctx;
-}
-
-// ── DRIVE ─────────────────────────────────────────────────────────────────────
 async function fetchDriveFiles(folderId) {
-  const url = `https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&fields=files(id,name,mimeType)&key=${GOOGLE_API_KEY}`;
-  const res = await fetch(url);
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&fields=files(id,name,mimeType)&key=${GOOGLE_API_KEY}`);
   const data = await res.json();
   return data.files || [];
-}
-
-async function fetchDocContent(file) {
-  if (file.mimeType === "application/vnd.google-apps.document") {
-    const url = `https://www.googleapis.com/drive/v3/files/${file.id}/export?mimeType=text/plain&key=${GOOGLE_API_KEY}`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    return await res.text();
-  }
-  return null;
 }
 
 async function loadClientContext(folderId) {
   const files = await fetchDriveFiles(folderId);
   const results = [];
-  for (const file of files) {
-    const content = await fetchDocContent(file);
-    if (content) results.push({ name: file.name, content: content.slice(0, 8000) });
+  for (const f of files) {
+    if (f.mimeType === "application/vnd.google-apps.document") {
+      try {
+        const res = await fetch(`https://www.googleapis.com/drive/v3/files/${f.id}/export?mimeType=text/plain&key=${GOOGLE_API_KEY}`);
+        if (res.ok) { const text = await res.text(); results.push({ name: f.name, content: text.slice(0, 8000) }); }
+      } catch {}
+    }
   }
   return results;
 }
 
 function buildSystemPrompt(client, driveFiles, newsContext, journalists) {
-  const fileSection = driveFiles.length > 0
-    ? `\n\nARCHIVOS DEL CLIENTE EN DRIVE:\n` + driveFiles.map(f => `\n--- ${f.name} ---\n${f.content}`).join("\n")
-    : "\n\n(No se encontraron archivos en Drive para este cliente aún.)";
-  const newsSection = newsContext ? `\n\nCONTEXTO DE NOTICIAS Y TENDENCIAS DEL SECTOR:\n${newsContext}` : "";
-  const journalistsSection = formatJournalistsContext(journalists || []);
-  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma.\n\nCLIENTE ACTIVO: ${client.name}\nIndustria: ${client.industry}\n${fileSection}${newsSection}${journalistsSection}\n\nINSTRUCCIONES:\n- Siempre escribes en español\n- Usas la información de los archivos de Drive como base para todo el contenido\n- La BASE DE PERIODISTAS DE NEUMA siempre está disponible. Úsala directamente\n- Cuando sugieras distribución usa ÚNICAMENTE los periodistas de esa base\n- Nunca inventas información del cliente\n- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica`;
+  const files = driveFiles.length > 0 ? `\n\nARCHIVOS DEL CLIENTE EN DRIVE:\n` + driveFiles.map(f => `\n--- ${f.name} ---\n${f.content}`).join("\n") : "\n\n(Sin archivos en Drive aún.)";
+  const news = newsContext ? `\n\nNOTICIAS DEL SECTOR:\n${newsContext}` : "";
+  let jCtx = "";
+  if (journalists && journalists.length > 0) {
+    const byMedio = {};
+    journalists.forEach(j => { if (!byMedio[j.medio]) byMedio[j.medio] = []; byMedio[j.medio].push(j); });
+    jCtx = `\n\nBASE DE PERIODISTAS (${journalists.length} contactos):\n`;
+    Object.entries(byMedio).slice(0, 30).forEach(([m, js]) => { jCtx += `\n${m}:\n`; js.forEach(j => { jCtx += `  · ${j.nombre} | ${j.cargo}`; if (j.correo) jCtx += ` | ${j.correo}`; jCtx += "\n"; }); });
+  }
+  return `Eres Lupita, agente de Relaciones Públicas para la agencia Neuma.\n\nCLIENTE: ${client.name} (${client.industry})\n${files}${news}${jCtx}\n\nInstrucciones: Escribe siempre en español. Usa los archivos de Drive como base. La base de periodistas siempre está disponible — úsala directamente. Nunca inventes información. Respeta regulaciones sanitarias (COFEPRIS).`;
 }
 
-// ── HELPERS ───────────────────────────────────────────────────────────────────
+function detectMemoryType(content) {
+  const l = content.toLowerCase();
+  if (l.includes("comunicado") || l.includes("boletín")) return "comunicado";
+  if (l.includes("pitch")) return "pitch";
+  return null;
+}
+
 function isGoogleAlert(fuente) { return (fuente || "").toLowerCase().includes("google"); }
 function isSentiOne(fuente) { return (fuente || "").toLowerCase().includes("sentione") || (fuente || "").toLowerCase().includes("lupita"); }
-
 function isRecent(fechaStr, horas = 6) {
   if (!fechaStr) return false;
-  try {
-    const fecha = new Date(fechaStr);
-    const diff = (new Date() - fecha) / (1000 * 60 * 60);
-    return diff <= horas;
-  } catch { return false; }
+  try { return (new Date() - new Date(fechaStr)) / 3600000 <= horas; } catch { return false; }
 }
-
 function fuenteStyle(fuente) {
   if (isSentiOne(fuente)) return { bg: "rgba(251,191,36,0.1)", color: "#FBBF24", label: "SentiOne" };
   if (isGoogleAlert(fuente)) return { bg: "rgba(96,165,250,0.1)", color: "#60A5FA", label: "Google Alerts" };
   return { bg: "rgba(156,163,175,0.1)", color: "#9CA3AF", label: fuente || "—" };
 }
 
-function detectMemoryType(content) {
-  const lower = content.toLowerCase();
-  if (lower.includes("comunicado") || lower.includes("boletín")) return "comunicado";
-  if (lower.includes("pitch")) return "pitch";
-  if (lower.includes("cobertura") || lower.includes("nota publicada") || lower.includes("salió en")) return "cobertura";
-  return null;
-}
+// ── RENDER MARKDOWN ───────────────────────────────────────────────────────────
 
-// ── MARKDOWN ──────────────────────────────────────────────────────────────────
 function renderInline(text) {
-  return text.split(/(\*\*.*?\*\*|`.*?`)/g).map((part, i) => {
-    if (part.startsWith("**") && part.endsWith("**")) return <strong key={i} style={{ color: "#E2E8F0", fontWeight: 700 }}>{part.slice(2, -2)}</strong>;
-    if (part.startsWith("`") && part.endsWith("`")) return <code key={i} style={{ background: "rgba(255,255,255,0.08)", padding: "1px 5px", borderRadius: 4, fontSize: 12, color: "#86EFAC" }}>{part.slice(1, -1)}</code>;
-    return part;
+  return text.split(/(\*\*.*?\*\*|`.*?`)/g).map((p, i) => {
+    if (p.startsWith("**") && p.endsWith("**")) return <strong key={i} style={{ color: "#E2E8F0" }}>{p.slice(2, -2)}</strong>;
+    if (p.startsWith("`") && p.endsWith("`")) return <code key={i} style={{ background: "rgba(255,255,255,0.08)", padding: "1px 5px", borderRadius: 4, fontSize: 12, color: "#86EFAC" }}>{p.slice(1, -1)}</code>;
+    return p;
   });
 }
 
@@ -217,14 +152,16 @@ function renderMarkdown(text) {
     if (line.startsWith("### ")) return <div key={i} style={{ fontSize: 13, fontWeight: 700, color: "#86EFAC", margin: "10px 0 3px" }}>{line.slice(4)}</div>;
     if (line.startsWith("## ")) return <div key={i} style={{ fontSize: 14, fontWeight: 700, color: "#4ADE80", margin: "12px 0 4px" }}>{line.slice(3)}</div>;
     if (line.startsWith("# ")) return <div key={i} style={{ fontSize: 16, fontWeight: 700, color: "#4ADE80", margin: "14px 0 5px" }}>{line.slice(2)}</div>;
-    if (line.startsWith("- ") || line.startsWith("• ") || line.startsWith("· ")) return <div key={i} style={{ display: "flex", gap: 8, paddingLeft: 8, margin: "3px 0" }}><span style={{ color: "#4ADE80", flexShrink: 0 }}>·</span><span style={{ color: "#CBD5E1" }}>{renderInline(line.slice(2))}</span></div>;
+    if (line.startsWith("- ") || line.startsWith("• ")) return <div key={i} style={{ display: "flex", gap: 8, paddingLeft: 8, margin: "3px 0" }}><span style={{ color: "#4ADE80" }}>·</span><span style={{ color: "#CBD5E1" }}>{renderInline(line.slice(2))}</span></div>;
     if (line.match(/^\d+\. /)) return <div key={i} style={{ color: "#CBD5E1", paddingLeft: 8, margin: "3px 0" }}>{renderInline(line)}</div>;
-    if (line.startsWith("→ ")) return <div key={i} style={{ display: "flex", gap: 8, paddingLeft: 8, margin: "3px 0" }}><span style={{ color: "#60A5FA", flexShrink: 0 }}>→</span><span style={{ color: "#CBD5E1" }}>{renderInline(line.slice(2))}</span></div>;
+    if (line.startsWith("→ ")) return <div key={i} style={{ display: "flex", gap: 8, paddingLeft: 8, margin: "3px 0" }}><span style={{ color: "#60A5FA" }}>→</span><span style={{ color: "#CBD5E1" }}>{renderInline(line.slice(2))}</span></div>;
     if (line.startsWith("---")) return <hr key={i} style={{ border: "none", borderTop: "1px solid rgba(255,255,255,0.07)", margin: "10px 0" }} />;
     if (line.trim() === "") return <div key={i} style={{ height: 6 }} />;
     return <div key={i} style={{ color: "#CBD5E1", margin: "2px 0", lineHeight: 1.65 }}>{renderInline(line)}</div>;
   });
 }
+
+// ── SMALL COMPONENTS ──────────────────────────────────────────────────────────
 
 function TypingDots() {
   return (
@@ -234,22 +171,31 @@ function TypingDots() {
   );
 }
 
-// ── MEMORY SAVE BANNER ────────────────────────────────────────────────────────
+function MessageBubble({ msg }) {
+  const isUser = msg.role === "user";
+  return (
+    <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", marginBottom: 14, animation: "lupFadeUp 0.28s ease" }}>
+      {!isUser && <div style={{ width: 32, height: 32, borderRadius: 9, background: "linear-gradient(135deg, #14532D, #22C55E)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, marginRight: 9, flexShrink: 0, marginTop: 2 }}>✦</div>}
+      <div style={{ maxWidth: "75%", padding: isUser ? "10px 15px" : "14px 17px", background: isUser ? "linear-gradient(135deg, #14532D, #166534)" : "rgba(255,255,255,0.03)", borderRadius: isUser ? "17px 17px 4px 17px" : "4px 17px 17px 17px", border: isUser ? "none" : "1px solid rgba(255,255,255,0.06)", fontSize: 13.5, lineHeight: 1.6 }}>
+        {isUser ? <span style={{ color: "#DCFCE7" }}>{msg.content}</span> : <div>{renderMarkdown(msg.content)}</div>}
+      </div>
+    </div>
+  );
+}
+
 function MemoryBanner({ type, clientName, content, onSave, onDismiss }) {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [title, setTitle] = useState("");
-
-  const typeLabels = { comunicado: "📋 Comunicado", pitch: "🎯 Pitch", cobertura: "📰 Cobertura" };
-  const typeSheets = { comunicado: "Campañas", pitch: "Pitches", cobertura: "Cobertura" };
+  const typeLabels = { comunicado: "📋 Comunicado", pitch: "🎯 Pitch" };
+  const typeSheets = { comunicado: "Campañas", pitch: "Pitches" };
 
   const handleSave = async () => {
     setSaving(true);
     const fecha = new Date().toLocaleDateString("es-MX");
-    let row;
-    if (type === "comunicado") row = [fecha, clientName, title || "Sin título", "Comunicado", "Borrador", content.slice(0, 200)];
-    else if (type === "pitch") row = [fecha, clientName, "", "", title || "Sin título", "Enviado", content.slice(0, 200)];
-    else row = [fecha, clientName, title || "Sin título", "", "", "", "", content.slice(0, 200)];
+    const row = type === "comunicado"
+      ? [fecha, clientName, title || "Sin título", "Comunicado", "Borrador", content.slice(0, 200)]
+      : [fecha, clientName, "", "", title || "Sin título", "Enviado", content.slice(0, 200)];
     const ok = await onSave(typeSheets[type], row);
     setSaving(false);
     if (ok) { setSaved(true); setTimeout(onDismiss, 2000); }
@@ -268,27 +214,20 @@ function MemoryBanner({ type, clientName, content, onSave, onDismiss }) {
         <span style={{ fontSize: 13, color: "#FBBF24", fontWeight: 600 }}>💾 ¿Guardar en Lupita Memory?</span>
         <span style={{ fontSize: 11, color: "#4B5563" }}>{typeLabels[type]} · {clientName}</span>
       </div>
-      <input
-        value={title}
-        onChange={e => setTitle(e.target.value)}
-        placeholder={`Título del ${type}...`}
-        style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "7px 10px", color: "#E2E8F0", fontSize: 12, marginBottom: 10, boxSizing: "border-box" }}
-      />
+      <input value={title} onChange={e => setTitle(e.target.value)} placeholder={`Título del ${type}...`}
+        style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "7px 10px", color: "#E2E8F0", fontSize: 12, marginBottom: 10, boxSizing: "border-box", outline: "none" }} />
       <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={handleSave} disabled={saving}
-          style={{ background: "rgba(251,191,36,0.15)", border: "1px solid rgba(251,191,36,0.3)", color: "#FBBF24", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
+        <button onClick={handleSave} disabled={saving} style={{ background: "rgba(251,191,36,0.15)", border: "1px solid rgba(251,191,36,0.3)", color: "#FBBF24", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
           {saving ? "Guardando..." : "💾 Guardar"}
         </button>
-        <button onClick={onDismiss}
-          style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "#4B5563", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
-          No ahora
-        </button>
+        <button onClick={onDismiss} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "#4B5563", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>No ahora</button>
       </div>
     </div>
   );
 }
 
-// ── REPORTE MATUTINO ──────────────────────────────────────────────────────────
+// ── REPORT SCREEN ─────────────────────────────────────────────────────────────
+
 function ReportScreen({ onGoToClient, clients }) {
   const [alerts, setAlerts] = useState([]);
   const [loadingAlerts, setLoadingAlerts] = useState(true);
@@ -296,13 +235,7 @@ function ReportScreen({ onGoToClient, clients }) {
   const fecha = new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
   useEffect(() => {
-    const load = async () => {
-      setLoadingAlerts(true);
-      const data = await fetchInboxAlerts();
-      setAlerts(data);
-      setLoadingAlerts(false);
-    };
-    load();
+    fetchInboxAlerts().then(data => { setAlerts(data); setLoadingAlerts(false); });
   }, []);
 
   const liveAlerts = alerts.filter(a => isGoogleAlert(a.fuente) && isRecent(a.fecha, 6));
@@ -312,7 +245,7 @@ function ReportScreen({ onGoToClient, clients }) {
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "32px 20px", animation: "lupIn 0.4s ease" }}>
       <div style={{ marginBottom: 28 }}>
         <p style={{ fontSize: 10, letterSpacing: "0.3em", color: "#1a4a1a", textTransform: "uppercase", marginBottom: 6 }}>Monitoreo · En tiempo real</p>
-        <h1 style={{ fontSize: "clamp(20px, 3vw, 28px)", fontWeight: 400, margin: "0 0 6px", letterSpacing: "-0.02em" }}>Buenos días, <em style={{ color: "#4ADE80" }}>Neuma</em></h1>
+        <h1 style={{ fontSize: "clamp(20px, 3vw, 28px)", fontWeight: 400, margin: "0 0 6px" }}>Buenos días, <em style={{ color: "#4ADE80" }}>Neuma</em></h1>
         <p style={{ fontSize: 12, color: "#374151", margin: 0, textTransform: "capitalize" }}>{fecha}</p>
       </div>
 
@@ -321,7 +254,7 @@ function ReportScreen({ onGoToClient, clients }) {
         <div>
           <div style={{ fontSize: 11, color: "#4ADE80", fontWeight: 700, marginBottom: 4 }}>RESUMEN LUPITA</div>
           <div style={{ fontSize: 13, color: "#CBD5E1", lineHeight: 1.6 }}>
-            {loadingAlerts ? "Cargando alertas..." : hasAlerts ? "Hay alertas activas hoy." : `Sin alertas críticas hoy. ${alerts.length} registros en monitoreo.`}
+            {loadingAlerts ? "Cargando..." : hasAlerts ? "Hay alertas activas hoy." : `Sin alertas críticas hoy. ${alerts.length} registros en monitoreo.`}
           </div>
         </div>
       </div>
@@ -339,70 +272,64 @@ function ReportScreen({ onGoToClient, clients }) {
         <div style={{ marginBottom: 24 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
             <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#EF4444", display: "inline-block", animation: "lupPulse 1.5s infinite" }} />
-            <span style={{ fontSize: 12, fontWeight: 700, color: "#EF4444", letterSpacing: "0.05em" }}>EN VIVO</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#EF4444" }}>EN VIVO</span>
             <span style={{ fontSize: 11, color: "#4B5563" }}>· Últimas 6 horas</span>
           </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {liveAlerts.map((a, i) => (
-              <div key={i} style={{ background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.15)", borderRadius: 12, padding: "12px 16px" }}>
-                <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                  <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(96,165,250,0.1)", color: "#60A5FA", borderRadius: 20, whiteSpace: "nowrap", flexShrink: 0 }}>Google Alerts</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 4 }}>{a.asunto}</div>
-                    {a.resumen && <div style={{ fontSize: 12, color: "#9CA3AF", lineHeight: 1.5 }}>{a.resumen.slice(0, 200)}</div>}
-                  </div>
-                  <span style={{ fontSize: 10, color: "#4B5563", flexShrink: 0 }}>{(a.fecha || "").slice(11, 16)}</span>
+          {liveAlerts.map((a, i) => (
+            <div key={i} style={{ background: "rgba(239,68,68,0.04)", border: "1px solid rgba(239,68,68,0.15)", borderRadius: 12, padding: "12px 16px", marginBottom: 8 }}>
+              <div style={{ display: "flex", gap: 10 }}>
+                <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(96,165,250,0.1)", color: "#60A5FA", borderRadius: 20, flexShrink: 0 }}>Google Alerts</span>
+                <div>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 3 }}>{a.asunto}</div>
+                  {a.resumen && <div style={{ fontSize: 12, color: "#9CA3AF" }}>{a.resumen.slice(0, 150)}</div>}
                 </div>
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       )}
 
       <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, overflow: "hidden" }}>
         <div style={{ padding: "14px 18px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 14 }}>📋</span>
+          <span>📋</span>
           <span style={{ fontSize: 13, fontWeight: 600, color: "#E2E8F0" }}>Historial de alertas</span>
           <span style={{ fontSize: 11, color: "#4B5563", marginLeft: "auto" }}>{alerts.length} registros</span>
         </div>
         {loadingAlerts ? (
-          <div style={{ padding: "32px", textAlign: "center", color: "#4B5563", fontSize: 13 }}>Cargando...</div>
+          <div style={{ padding: "32px", textAlign: "center", color: "#4B5563" }}>Cargando...</div>
         ) : alerts.length === 0 ? (
-          <div style={{ padding: "32px", textAlign: "center", color: "#4B5563", fontSize: 13 }}>Sin alertas registradas aún.</div>
-        ) : (
-          alerts.map((a, i) => {
-            const fs = fuenteStyle(a.fuente);
-            const isExp = expanded === i;
-            return (
-              <div key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)", cursor: a.resumen ? "pointer" : "default" }}
-                onClick={() => a.resumen && setExpanded(isExp ? null : i)}>
-                <div style={{ padding: "12px 18px", display: "flex", gap: 12, alignItems: "flex-start" }}>
-                  <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 90 }}>
-                    <span style={{ fontSize: 10, padding: "2px 8px", background: fs.bg, color: fs.color, borderRadius: 20, whiteSpace: "nowrap" }}>{fs.label}</span>
-                    <span style={{ fontSize: 10, color: "#4B5563" }}>{(a.fecha || "").slice(0, 10)}</span>
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 4 }}>{a.asunto}</div>
-                    {a.resumen && <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.6 }}>{isExp ? a.resumen : a.resumen.slice(0, 200) + (a.resumen.length > 200 ? "..." : "")}</div>}
-                    {a.resumen && a.resumen.length > 200 && <div style={{ fontSize: 11, color: "#4ADE80", marginTop: 5 }}>{isExp ? "▲ Ver menos" : "▼ Ver más"}</div>}
-                  </div>
+          <div style={{ padding: "32px", textAlign: "center", color: "#4B5563" }}>Sin alertas registradas aún.</div>
+        ) : alerts.map((a, i) => {
+          const fs = fuenteStyle(a.fuente);
+          const isExp = expanded === i;
+          return (
+            <div key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)", cursor: a.resumen ? "pointer" : "default" }} onClick={() => a.resumen && setExpanded(isExp ? null : i)}>
+              <div style={{ padding: "12px 18px", display: "flex", gap: 12 }}>
+                <div style={{ flexShrink: 0, minWidth: 90, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  <span style={{ fontSize: 10, padding: "2px 8px", background: fs.bg, color: fs.color, borderRadius: 20 }}>{fs.label}</span>
+                  <span style={{ fontSize: 10, color: "#4B5563" }}>{(a.fecha || "").slice(0, 10)}</span>
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 4 }}>{a.asunto}</div>
+                  {a.resumen && <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.6 }}>{isExp ? a.resumen : a.resumen.slice(0, 200) + (a.resumen.length > 200 ? "..." : "")}</div>}
+                  {a.resumen && a.resumen.length > 200 && <div style={{ fontSize: 11, color: "#4ADE80", marginTop: 4 }}>{isExp ? "▲ Ver menos" : "▼ Ver más"}</div>}
                 </div>
               </div>
-            );
-          })
-        )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
-// ── APP PRINCIPAL ─────────────────────────────────────────────────────────────
+// ── MAIN APP ──────────────────────────────────────────────────────────────────
+
 export default function LupitaApp() {
   const [authState, setAuthState] = useState("loading");
   const [currentUser, setCurrentUser] = useState(null);
   const [screen, setScreen] = useState("home");
   const [activeClient, setActiveClient] = useState(null);
-  const [activeAction, setActiveAction] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -455,23 +382,21 @@ export default function LupitaApp() {
 
   const startChat = async (client) => {
     setActiveClient(client); setScreen("chat"); setLoadingDrive(true);
-    setDriveStatus("Cargando Drive y noticias del sector..."); setMessages([]);
+    setDriveStatus("Cargando Drive y noticias..."); setMessages([]);
     setNewsContext(null); setJournalists([]); setJournalistsStatus("Cargando periodistas...");
-    setMemoryBanner(null); setActiveAction(null);
+    setMemoryBanner(null);
     try {
-      const [files, news, journalistsList] = await Promise.all([
-        loadClientContext(client.folderId), searchGemini(client.searchQuery), fetchJournalists(client.sectors || [client.industry])
-      ]);
-      setDriveFiles(files); setNewsContext(news); setJournalists(journalistsList);
-      setJournalistsStatus(`${journalistsList.length} periodistas relevantes`);
-      setDriveStatus(files.length > 0 ? `${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Noticias cargadas" : "sin noticias"}` : `Sin archivos · ${news ? "🌐 Noticias cargadas" : ""}`);
-      systemPromptRef.current = buildSystemPrompt(client, files, news, journalistsList);
+      const [files, news, jList] = await Promise.all([loadClientContext(client.folderId), searchGemini(client.searchQuery), fetchJournalists(client.sectors || [client.industry])]);
+      setDriveFiles(files); setNewsContext(news); setJournalists(jList);
+      setJournalistsStatus(`${jList.length} periodistas relevantes`);
+      setDriveStatus(files.length > 0 ? `${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Noticias" : "sin noticias"}` : `Sin archivos · ${news ? "🌐 Noticias" : ""}`);
+      systemPromptRef.current = buildSystemPrompt(client, files, news, jList);
+      const newsLine = news ? "\n\n🌐 **Noticias del sector cargadas.**" : "";
       const fileNames = files.map(f => `· ${f.name}`).join("\n");
-      const newsLine = news ? "\n\n🌐 **Noticias del sector cargadas** — tengo contexto de las tendencias más recientes." : "";
-      setMessages([{ role: "assistant", content: files.length > 0 ? `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.\n\nHe leído **${files.length} archivo${files.length > 1 ? "s" : ""}** de Drive:\n${fileNames}${newsLine}\n\n¿Qué necesitas generar hoy?` : `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.${newsLine}\n\n¿Qué necesitas generar?` }]);
+      setMessages([{ role: "assistant", content: files.length > 0 ? `¡Hola! Soy Lupita, lista para **${client.name}**.\n\nArchivos de Drive:\n${fileNames}${newsLine}\n\n¿Qué necesitas generar?` : `¡Hola! Soy Lupita, lista para **${client.name}**.${newsLine}\n\n¿Qué necesitas generar?` }]);
     } catch {
-      setDriveStatus("Error al cargar contexto"); setJournalistsStatus("");
-      setMessages([{ role: "assistant", content: `¡Hola! Soy Lupita, lista para trabajar con **${client.name}**.\n\n¿Qué necesitas generar?` }]);
+      setDriveStatus("Error al cargar"); setJournalistsStatus("");
+      setMessages([{ role: "assistant", content: `¡Hola! Soy Lupita, lista para **${client.name}**. ¿Qué necesitas generar?` }]);
     }
     setLoadingDrive(false);
   };
@@ -480,7 +405,6 @@ export default function LupitaApp() {
     const userText = text || input.trim();
     if (!userText || loading) return;
     setInput("");
-    if (actionTipo) setActiveAction(actionTipo);
     const newMsgs = [...messages, { role: "user", content: userText }];
     setMessages(newMsgs); setLoading(true); setMemoryBanner(null);
     try {
@@ -488,19 +412,11 @@ export default function LupitaApp() {
       const data = await res.json();
       const reply = data.content?.map(b => b.text).join("") || "Error al obtener respuesta.";
       setMessages(prev => [...prev, { role: "assistant", content: reply }]);
-
-      // Detectar si se generó algo guardable
       const tipo = actionTipo || detectMemoryType(reply);
-      if (tipo && (tipo === "comunicado" || tipo === "pitch") && reply.length > 200) {
-        setTimeout(() => setMemoryBanner({ type: tipo, content: reply }), 500);
-      }
-    } catch { setMessages(prev => [...prev, { role: "assistant", content: "Error de conexión. Intenta de nuevo." }]); }
+      if (tipo && reply.length > 300) setTimeout(() => setMemoryBanner({ type: tipo, content: reply }), 600);
+    } catch { setMessages(prev => [...prev, { role: "assistant", content: "Error de conexión." }]); }
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 100);
-  };
-
-  const handleMemorySave = async (sheet, row) => {
-    return await saveToMemory(sheet, row);
   };
 
   const copyLast = () => {
@@ -512,129 +428,109 @@ export default function LupitaApp() {
     if (!activeClient) return;
     setLoadingDrive(true); setDriveStatus("Actualizando...");
     try {
-      const [files, news, journalistsList] = await Promise.all([loadClientContext(activeClient.folderId), searchGemini(activeClient.searchQuery), fetchJournalists(activeClient.sectors || [activeClient.industry])]);
-      setDriveFiles(files); setNewsContext(news); setJournalists(journalistsList);
-      setJournalistsStatus(`${journalistsList.length} periodistas relevantes`);
-      systemPromptRef.current = buildSystemPrompt(activeClient, files, news, journalistsList);
-      setDriveStatus(`${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Noticias actualizadas" : "sin noticias"}`);
-    } catch { setDriveStatus("Error al actualizar"); }
+      const [files, news, jList] = await Promise.all([loadClientContext(activeClient.folderId), searchGemini(activeClient.searchQuery), fetchJournalists(activeClient.sectors || [activeClient.industry])]);
+      setDriveFiles(files); setNewsContext(news); setJournalists(jList);
+      setJournalistsStatus(`${jList.length} periodistas relevantes`);
+      systemPromptRef.current = buildSystemPrompt(activeClient, files, news, jList);
+      setDriveStatus(`${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Actualizadas" : "sin noticias"}`);
+    } catch { setDriveStatus("Error"); }
     setLoadingDrive(false);
   };
 
-  const errorMessages = {
-    domain_not_allowed: "Solo cuentas @neuma.mx pueden acceder.",
-    user_not_authorized: "Tu cuenta no tiene permisos asignados. Contacta a la directora.",
-    auth_failed: "Error de autenticación. Intenta de nuevo.",
-    session_expired: "Tu sesión expiró. Inicia sesión nuevamente.",
-  };
+  const errorMessages = { domain_not_allowed: "Solo cuentas @neuma.mx.", user_not_authorized: "Sin permisos. Contacta a la directora.", auth_failed: "Error de autenticación.", session_expired: "Sesión expirada." };
 
   if (authState === "loading") return (
     <div style={{ minHeight: "100vh", background: "#07090C", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <style>{`@keyframes lupSpin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }`}</style>
+      <style>{`@keyframes lupSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}`}</style>
       <div style={{ textAlign: "center" }}>
         <div style={{ width: 40, height: 40, border: "2px solid #4ADE80", borderTopColor: "transparent", borderRadius: "50%", animation: "lupSpin 0.8s linear infinite", margin: "0 auto 16px" }} />
-        <div style={{ fontSize: 13, color: "#2a4a2a", fontFamily: "Georgia, serif" }}>Verificando sesión...</div>
+        <div style={{ fontSize: 13, color: "#2a4a2a", fontFamily: "Georgia" }}>Verificando sesión...</div>
       </div>
     </div>
   );
 
   if (authState === "login") return (
-    <div style={{ minHeight: "100vh", background: "#07090C", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Georgia', serif", padding: 20 }}>
-      <style>{`@keyframes lupIn { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:none} } button:hover { opacity: 0.92; }`}</style>
+    <div style={{ minHeight: "100vh", background: "#07090C", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Georgia", padding: 20 }}>
+      <style>{`@keyframes lupIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}`}</style>
       <div style={{ maxWidth: 400, width: "100%", textAlign: "center", animation: "lupIn 0.4s ease" }}>
-        <div style={{ width: 64, height: 64, borderRadius: 18, background: "linear-gradient(135deg, #052e16, #16A34A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 24px" }}>✦</div>
+        <div style={{ width: 64, height: 64, borderRadius: 18, background: "linear-gradient(135deg,#052e16,#16A34A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 24px" }}>✦</div>
         <p style={{ fontSize: 10, letterSpacing: "0.3em", color: "#1a4a1a", textTransform: "uppercase", marginBottom: 8 }}>Neuma · Agencia de RRPP</p>
-        <h1 style={{ fontSize: 32, fontWeight: 400, margin: "0 0 8px", letterSpacing: "-0.02em", color: "#F0FDF4" }}>Bienvenida a <em style={{ color: "#4ADE80" }}>Lupita</em></h1>
-        <p style={{ color: "#374151", fontSize: 14, margin: "0 0 36px", lineHeight: 1.7 }}>Tu agente de IA para Relaciones Públicas.<br />Inicia sesión con tu cuenta de Neuma.</p>
-        {urlError && errorMessages[urlError] && (
-          <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 10, padding: "10px 16px", marginBottom: 20 }}>
-            <p style={{ color: "#FCA5A5", fontSize: 13, margin: 0 }}>⚠ {errorMessages[urlError]}</p>
-          </div>
-        )}
-        <button onClick={() => {
-          const params = new URLSearchParams({ client_id: GOOGLE_CLIENT_ID, redirect_uri: `${window.location.origin}/auth/callback`, response_type: "code", scope: "openid email profile", hd: "neuma.mx", access_type: "online", prompt: "select_account" });
-          window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
-        }} style={{ width: "100%", background: "#fff", border: "none", borderRadius: 12, padding: "14px 20px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, fontSize: 15, fontWeight: 600, color: "#1a1a1a", transition: "all 0.2s", boxShadow: "0 2px 16px rgba(74,222,128,0.1)" }}>
+        <h1 style={{ fontSize: 32, fontWeight: 400, margin: "0 0 8px", color: "#F0FDF4" }}>Bienvenida a <em style={{ color: "#4ADE80" }}>Lupita</em></h1>
+        <p style={{ color: "#374151", fontSize: 14, margin: "0 0 36px", lineHeight: 1.7 }}>Tu agente de IA para Relaciones Públicas.</p>
+        {urlError && errorMessages[urlError] && <div style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)", borderRadius: 10, padding: "10px 16px", marginBottom: 20 }}><p style={{ color: "#FCA5A5", fontSize: 13, margin: 0 }}>⚠ {errorMessages[urlError]}</p></div>}
+        <button onClick={() => { const p = new URLSearchParams({ client_id: GOOGLE_CLIENT_ID, redirect_uri: `${window.location.origin}/auth/callback`, response_type: "code", scope: "openid email profile", hd: "neuma.mx", access_type: "online", prompt: "select_account" }); window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${p}`; }}
+          style={{ width: "100%", background: "#fff", border: "none", borderRadius: 12, padding: "14px 20px", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 12, fontSize: 15, fontWeight: 600, color: "#1a1a1a" }}>
           <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
           Iniciar sesión con Google
         </button>
-        <p style={{ fontSize: 11, color: "#1a3a1a", marginTop: 20, lineHeight: 1.6 }}>Solo cuentas <strong style={{ color: "#2a5a2a" }}>@neuma.mx</strong> tienen acceso.</p>
+        <p style={{ fontSize: 11, color: "#1a3a1a", marginTop: 20 }}>Solo cuentas <strong>@neuma.mx</strong> tienen acceso.</p>
       </div>
     </div>
   );
 
   if (authState === "unauthorized") return (
-    <div style={{ minHeight: "100vh", background: "#07090C", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Georgia', serif", padding: 20 }}>
-      <div style={{ maxWidth: 400, width: "100%", textAlign: "center" }}>
+    <div style={{ minHeight: "100vh", background: "#07090C", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "Georgia", padding: 20 }}>
+      <div style={{ maxWidth: 400, textAlign: "center" }}>
         <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
-        <h2 style={{ color: "#F0FDF4", fontWeight: 400, marginBottom: 8 }}>Acceso restringido</h2>
-        <p style={{ color: "#374151", fontSize: 14, marginBottom: 24 }}>Tu cuenta <strong style={{ color: "#6B7280" }}>{currentUser?.email}</strong> no tiene permisos asignados.</p>
-        <button onClick={handleLogout} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#9CA3AF", borderRadius: 10, padding: "10px 20px", cursor: "pointer", fontSize: 13 }}>Cerrar sesión</button>
+        <h2 style={{ color: "#F0FDF4", fontWeight: 400 }}>Acceso restringido</h2>
+        <p style={{ color: "#374151", fontSize: 14, marginBottom: 24 }}>Tu cuenta no tiene permisos. Contacta a la directora.</p>
+        <button onClick={handleLogout} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", color: "#9CA3AF", borderRadius: 10, padding: "10px 20px", cursor: "pointer" }}>Cerrar sesión</button>
       </div>
     </div>
   );
 
-  const backAction = screen === "chat"
-    ? () => { setScreen("home"); setMessages([]); setActiveClient(null); setDriveFiles([]); setNewsContext(null); setJournalists([]); setJournalistsStatus(""); setMemoryBanner(null); }
-    : screen === "reporte" ? () => setScreen("home") : null;
+  const backAction = screen === "chat" ? () => { setScreen("home"); setMessages([]); setActiveClient(null); setDriveFiles([]); setNewsContext(null); setJournalists([]); setJournalistsStatus(""); setMemoryBanner(null); } : screen === "reporte" ? () => setScreen("home") : null;
 
   return (
     <div style={{ minHeight: "100vh", background: "#07090C", fontFamily: "'Georgia', serif", color: "#E2E8F0" }}>
       <style>{`
-        @keyframes lupFadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:none} }
-        @keyframes lupBounce { 0%,80%,100%{transform:translateY(0)} 40%{transform:translateY(-5px)} }
-        @keyframes lupPulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-        @keyframes lupIn { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:none} }
-        @keyframes lupSpin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
-        textarea{resize:none;} textarea:focus{outline:none;}
-        ::-webkit-scrollbar{width:3px} ::-webkit-scrollbar-thumb{background:#1a2a1a;border-radius:3px}
-        input:focus{outline:none;}
+        @keyframes lupFadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+        @keyframes lupBounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-5px)}}
+        @keyframes lupPulse{0%,100%{opacity:1}50%{opacity:0.3}}
+        @keyframes lupIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+        @keyframes lupSpin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
+        textarea{resize:none;}textarea:focus{outline:none;}
+        ::-webkit-scrollbar{width:3px}::-webkit-scrollbar-thumb{background:#1a2a1a;border-radius:3px}
       `}</style>
 
       {/* HEADER */}
       <div style={{ padding: "14px 24px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", justifyContent: "space-between", background: "rgba(0,0,0,0.4)", backdropFilter: "blur(12px)", position: "sticky", top: 0, zIndex: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
           {backAction && <button onClick={backAction} style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 8, padding: "5px 10px", color: "#888", fontSize: 12, cursor: "pointer", marginRight: 4 }}>{screen === "chat" ? "← Clientes" : "← Inicio"}</button>}
-          <div style={{ width: 34, height: 34, borderRadius: 9, background: "linear-gradient(135deg, #052e16, #16A34A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>✦</div>
+          <div style={{ width: 34, height: 34, borderRadius: 9, background: "linear-gradient(135deg,#052e16,#16A34A)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>✦</div>
           <div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: "#F0FDF4", letterSpacing: "-0.01em" }}>
-              Lupita
-              {activeClient && screen === "chat" && <span style={{ color: activeClient.color, fontWeight: 400 }}> · {activeClient.name}</span>}
-              {screen === "reporte" && <span style={{ color: "#FBBF24", fontWeight: 400 }}> · Reporte Matutino</span>}
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#F0FDF4" }}>
+              Lupita{activeClient && screen === "chat" && <span style={{ color: activeClient.color, fontWeight: 400 }}> · {activeClient.name}</span>}{screen === "reporte" && <span style={{ color: "#FBBF24", fontWeight: 400 }}> · Reporte</span>}
             </div>
             <div style={{ fontSize: 10, color: "#4ADE80", display: "flex", alignItems: "center", gap: 5 }}>
               <span style={{ width: 5, height: 5, borderRadius: "50%", background: "#4ADE80", display: "inline-block", animation: "lupPulse 2s infinite" }} />
-              {currentUser?.name || currentUser?.email}
-              {currentUser?.role === "directora" && <span style={{ color: "#FBBF24", marginLeft: 3 }}>✦ Directora</span>}
+              {currentUser?.name || currentUser?.email}{currentUser?.role === "directora" && <span style={{ color: "#FBBF24", marginLeft: 3 }}>✦ Directora</span>}
             </div>
           </div>
         </div>
         <div style={{ display: "flex", gap: 7, alignItems: "center" }}>
-          {screen === "chat" && (
-            <>
-              {journalistsStatus && <span style={{ fontSize: 10, color: journalists.length > 0 ? "#A78BFA" : "#4B5563", display: "flex", alignItems: "center", gap: 4 }}>👥 {journalistsStatus}</span>}
-              {driveStatus && <span style={{ fontSize: 10, color: loadingDrive ? "#FBBF24" : "#4ADE80", display: "flex", alignItems: "center", gap: 5 }}>{loadingDrive ? <span style={{ display: "inline-block", width: 8, height: 8, border: "1.5px solid #FBBF24", borderTopColor: "transparent", borderRadius: "50%", animation: "lupSpin 0.7s linear infinite" }} /> : <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />}{driveStatus}</span>}
-              <button onClick={refreshDrive} disabled={loadingDrive} style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.15)", color: "#4ADE80", borderRadius: 8, padding: "5px 11px", fontSize: 11, cursor: "pointer" }}>↻ Drive</button>
-              <button onClick={copyLast} style={{ background: "rgba(74,222,128,0.07)", border: "1px solid rgba(74,222,128,0.18)", color: "#4ADE80", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>{copied ? "✓ Copiado" : "📋 Copiar"}</button>
-              <button onClick={() => { setMessages([{ role: "assistant", content: `¡Listo para seguir con **${activeClient.name}**! ¿Qué necesitas ahora?` }]); setMemoryBanner(null); }} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", color: "#666", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>Nueva conv.</button>
-            </>
-          )}
+          {screen === "chat" && (<>
+            {journalistsStatus && <span style={{ fontSize: 10, color: "#A78BFA" }}>👥 {journalistsStatus}</span>}
+            {driveStatus && <span style={{ fontSize: 10, color: loadingDrive ? "#FBBF24" : "#4ADE80", display: "flex", alignItems: "center", gap: 4 }}>{loadingDrive ? <span style={{ width: 8, height: 8, border: "1.5px solid #FBBF24", borderTopColor: "transparent", borderRadius: "50%", display: "inline-block", animation: "lupSpin 0.7s linear infinite" }} /> : <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />}{driveStatus}</span>}
+            <button onClick={refreshDrive} disabled={loadingDrive} style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.15)", color: "#4ADE80", borderRadius: 8, padding: "5px 11px", fontSize: 11, cursor: "pointer" }}>↻ Drive</button>
+            <button onClick={copyLast} style={{ background: "rgba(74,222,128,0.07)", border: "1px solid rgba(74,222,128,0.18)", color: "#4ADE80", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>{copied ? "✓ Copiado" : "📋 Copiar"}</button>
+            <button onClick={() => { setMessages([{ role: "assistant", content: `¡Listo para **${activeClient.name}**! ¿Qué necesitas?` }]); setMemoryBanner(null); }} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", color: "#666", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>Nueva conv.</button>
+          </>)}
           {screen === "home" && canSeeReport && (
             <button onClick={() => setScreen("reporte")} style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)", color: "#FBBF24", borderRadius: 10, padding: "7px 14px", fontSize: 12, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#FBBF24", display: "inline-block", animation: "lupPulse 2s infinite" }} />
-              📊 Reporte de hoy
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#FBBF24", display: "inline-block", animation: "lupPulse 2s infinite" }} />📊 Reporte de hoy
             </button>
           )}
           <div style={{ position: "relative" }}>
-            <div onClick={() => setShowUserMenu(!showUserMenu)} style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(74,222,128,0.12)", border: "1.5px solid rgba(74,222,128,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#4ADE80", cursor: "pointer", fontWeight: 700, userSelect: "none" }}>
+            <div onClick={() => setShowUserMenu(!showUserMenu)} style={{ width: 32, height: 32, borderRadius: "50%", background: "rgba(74,222,128,0.12)", border: "1.5px solid rgba(74,222,128,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, color: "#4ADE80", cursor: "pointer", fontWeight: 700 }}>
               {(currentUser?.name || currentUser?.email || "?")[0].toUpperCase()}
             </div>
             {showUserMenu && (
               <div style={{ position: "absolute", right: 0, top: "calc(100% + 8px)", background: "#0D1A0D", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: 8, minWidth: 200, zIndex: 100, boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}>
                 <div style={{ padding: "8px 12px 10px", borderBottom: "1px solid rgba(255,255,255,0.05)", marginBottom: 4 }}>
-                  <div style={{ fontSize: 12, color: "#9CA3AF", marginBottom: 2 }}>{currentUser?.name}</div>
+                  <div style={{ fontSize: 12, color: "#9CA3AF" }}>{currentUser?.name}</div>
                   <div style={{ fontSize: 11, color: "#4B5563" }}>{currentUser?.email}</div>
-                  <div style={{ fontSize: 10, color: "#4ADE80", marginTop: 4 }}>{currentUser?.role === "directora" ? "✦ Directora · Acceso total" : `Account · ${CLIENTS.length} cliente${CLIENTS.length !== 1 ? "s" : ""}`}</div>
+                  <div style={{ fontSize: 10, color: "#4ADE80", marginTop: 4 }}>{currentUser?.role === "directora" ? "✦ Directora · Acceso total" : `Account · ${CLIENTS.length} clientes`}</div>
                 </div>
                 <button onClick={handleLogout} style={{ width: "100%", background: "transparent", border: "none", color: "#F87171", fontSize: 12, padding: "8px 12px", cursor: "pointer", textAlign: "left", borderRadius: 8 }}>→ Cerrar sesión</button>
               </div>
@@ -647,38 +543,28 @@ export default function LupitaApp() {
       {screen === "home" && (
         <div style={{ maxWidth: 680, margin: "0 auto", padding: "44px 20px", animation: "lupIn 0.4s ease" }}>
           <p style={{ fontSize: 10, letterSpacing: "0.3em", color: "#1a3a1a", textTransform: "uppercase", marginBottom: 10 }}>Neuma · Agencia de RRPP</p>
-          <h1 style={{ fontSize: "clamp(26px, 4vw, 38px)", fontWeight: 400, margin: "0 0 8px", letterSpacing: "-0.02em", lineHeight: 1.1 }}>
-            Hola, {currentUser?.name?.split(" ")[0]}<br /><em style={{ color: "#4ADE80" }}>¿con qué cliente trabajamos?</em>
-          </h1>
-          <p style={{ color: "#374151", fontSize: 13, margin: "0 0 8px", lineHeight: 1.7 }}>Selecciona el cliente y Lupita leerá automáticamente sus archivos de Drive y las noticias más recientes del sector.</p>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 32, fontSize: 11, color: "#1a4a1a" }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />
-            Conectada a Google Drive · Gemini · {CLIENTS.length} cliente{CLIENTS.length !== 1 ? "s" : ""} asignado{CLIENTS.length !== 1 ? "s" : ""}
-          </div>
+          <h1 style={{ fontSize: "clamp(26px,4vw,38px)", fontWeight: 400, margin: "0 0 8px", lineHeight: 1.1 }}>Hola, {currentUser?.name?.split(" ")[0]}<br /><em style={{ color: "#4ADE80" }}>¿con qué cliente trabajamos?</em></h1>
+          <p style={{ color: "#374151", fontSize: 13, margin: "0 0 32px", lineHeight: 1.7 }}>Selecciona el cliente y Lupita cargará sus archivos de Drive y noticias del sector.</p>
           <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 40 }}>
             {CLIENTS.map((client, i) => (
               <button key={client.id} onClick={() => startChat(client)}
-                style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: "18px 20px", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 16, transition: "all 0.2s", animation: `lupIn 0.4s ease ${i * 0.07}s both` }}
+                style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, padding: "18px 20px", cursor: "pointer", textAlign: "left", display: "flex", alignItems: "center", gap: 16, transition: "all 0.2s", animation: `lupIn 0.4s ease ${i*0.07}s both` }}
                 onMouseEnter={e => { e.currentTarget.style.background = `${client.color}10`; e.currentTarget.style.borderColor = `${client.color}40`; e.currentTarget.style.transform = "translateX(4px)"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.02)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)"; e.currentTarget.style.transform = "none"; }}
-              >
-                <div style={{ width: 44, height: 44, borderRadius: 12, background: client.color + "18", border: `1.5px solid ${client.color}33`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, color: client.color, flexShrink: 0 }}>{client.initials}</div>
+                onMouseLeave={e => { e.currentTarget.style.background = "rgba(255,255,255,0.02)"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)"; e.currentTarget.style.transform = "none"; }}>
+                <div style={{ width: 44, height: 44, borderRadius: 12, background: client.color+"18", border: `1.5px solid ${client.color}33`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, color: client.color, flexShrink: 0 }}>{client.initials}</div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 15, fontWeight: 600, color: "#E2E8F0", marginBottom: 2 }}>{client.name}</div>
                   <div style={{ fontSize: 12, color: "#4B5563" }}>{client.industry}</div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 10, color: "#2a4a2a" }}>
-                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block", opacity: 0.6 }} />Drive + Gemini
-                </div>
-                <span style={{ color: "#2D3748", fontSize: 16, marginLeft: 4 }}>→</span>
+                <span style={{ color: "#2D3748", fontSize: 16 }}>→</span>
               </button>
             ))}
           </div>
           {currentUser?.role === "directora" && (
             <div style={{ border: "1.5px dashed rgba(255,255,255,0.06)", borderRadius: 14, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, color: "#2D3748", flexShrink: 0 }}>+</div>
+              <div style={{ width: 44, height: 44, borderRadius: 12, background: "rgba(255,255,255,0.03)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, color: "#2D3748" }}>+</div>
               <div>
-                <div style={{ fontSize: 13, color: "#374151", marginBottom: 2 }}>Agregar nuevo cliente o usuario</div>
+                <div style={{ fontSize: 13, color: "#374151" }}>Agregar nuevo cliente o usuario</div>
                 <div style={{ fontSize: 11, color: "#1F2937" }}>Edita App.jsx + src/users.js en GitHub</div>
               </div>
             </div>
@@ -692,39 +578,33 @@ export default function LupitaApp() {
       {screen === "chat" && (
         <div style={{ maxWidth: 720, margin: "0 auto", padding: "0 16px", display: "flex", flexDirection: "column", height: "calc(100vh - 64px)" }}>
           {(driveFiles.length > 0 || newsContext) && (
-            <div style={{ padding: "8px 0 6px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-              <span style={{ fontSize: 10, color: "#2a4a2a", marginRight: 2 }}>📂</span>
-              {driveFiles.map((f, i) => <span key={i} style={{ fontSize: 10, padding: "2px 8px", background: activeClient.color + "0F", border: `1px solid ${activeClient.color}22`, borderRadius: 20, color: activeClient.color }}>{f.name}</span>)}
-              {newsContext && <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: 20, color: "#818CF8" }}>🌐 Noticias del sector</span>}
+            <div style={{ padding: "8px 0 6px", borderBottom: "1px solid rgba(255,255,255,0.04)", display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, color: "#2a4a2a" }}>📂</span>
+              {driveFiles.map((f, i) => <span key={i} style={{ fontSize: 10, padding: "2px 8px", background: activeClient.color+"0F", border: `1px solid ${activeClient.color}22`, borderRadius: 20, color: activeClient.color }}>{f.name}</span>)}
+              {newsContext && <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: 20, color: "#818CF8" }}>🌐 Noticias</span>}
               {journalists.length > 0 && <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(167,139,250,0.1)", border: "1px solid rgba(167,139,250,0.25)", borderRadius: 20, color: "#A78BFA" }}>👥 {journalists.length} periodistas</span>}
             </div>
           )}
           {loadingDrive && messages.length === 0 && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, flexDirection: "column", gap: 12 }}>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12 }}>
               <div style={{ width: 32, height: 32, border: "2px solid #4ADE80", borderTopColor: "transparent", borderRadius: "50%", animation: "lupSpin 0.8s linear infinite" }} />
-              <div style={{ fontSize: 13, color: "#2a4a2a" }}>Cargando Drive y noticias del sector...</div>
+              <div style={{ fontSize: 13, color: "#2a4a2a" }}>Cargando Drive y noticias...</div>
             </div>
           )}
           <div style={{ flex: 1, overflowY: "auto", padding: "20px 0 10px" }}>
             {messages.map((msg, i) => <MessageBubble key={i} msg={msg} />)}
             {loading && (
               <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 14 }}>
-                <div style={{ width: 32, height: 32, borderRadius: 9, background: "linear-gradient(135deg, #14532D, #22C55E)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>✦</div>
+                <div style={{ width: 32, height: 32, borderRadius: 9, background: "linear-gradient(135deg,#14532D,#22C55E)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, flexShrink: 0 }}>✦</div>
                 <TypingDots />
               </div>
             )}
             <div ref={bottomRef} />
           </div>
 
-          {/* Memory Banner */}
           {memoryBanner && !loading && (
-            <MemoryBanner
-              type={memoryBanner.type}
-              clientName={activeClient?.name}
-              content={memoryBanner.content}
-              onSave={handleMemorySave}
-              onDismiss={() => setMemoryBanner(null)}
-            />
+            <MemoryBanner type={memoryBanner.type} clientName={activeClient?.name} content={memoryBanner.content}
+              onSave={saveToMemory} onDismiss={() => setMemoryBanner(null)} />
           )}
 
           {!loading && (
@@ -732,22 +612,24 @@ export default function LupitaApp() {
               {ACTIONS.map(a => (
                 <button key={a.id} onClick={() => sendMessage(a.prompt(activeClient), a.tipo)}
                   style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, padding: "5px 12px", fontSize: 11, color: "#4B5563", cursor: "pointer", transition: "all 0.15s" }}
-                  onMouseEnter={e => { e.currentTarget.style.color = a.color; e.currentTarget.style.borderColor = a.color + "44"; }}
-                  onMouseLeave={e => { e.currentTarget.style.color = "#4B5563"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)"; }}
-                >{a.icon} {a.label}</button>
+                  onMouseEnter={e => { e.currentTarget.style.color = a.color; e.currentTarget.style.borderColor = a.color+"44"; }}
+                  onMouseLeave={e => { e.currentTarget.style.color = "#4B5563"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)"; }}>
+                  {a.icon} {a.label}
+                </button>
               ))}
             </div>
           )}
+
           <div style={{ paddingBottom: 20 }}>
             <div style={{ display: "flex", gap: 9, alignItems: "flex-end", background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: 15, padding: "11px 13px", transition: "border-color 0.2s" }}
               onFocusCapture={e => e.currentTarget.style.borderColor = "rgba(74,222,128,0.3)"}
               onBlurCapture={e => e.currentTarget.style.borderColor = "rgba(255,255,255,0.07)"}>
               <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-                placeholder={`Pídele algo a Lupita sobre ${activeClient?.name}…`}
-                rows={2} style={{ flex: 1, background: "transparent", border: "none", color: "#E2E8F0", fontSize: 13.5, lineHeight: 1.6, fontFamily: "inherit" }} />
+                placeholder={`Pídele algo a Lupita sobre ${activeClient?.name}…`} rows={2}
+                style={{ flex: 1, background: "transparent", border: "none", color: "#E2E8F0", fontSize: 13.5, lineHeight: 1.6, fontFamily: "inherit" }} />
               <button onClick={() => sendMessage()} disabled={!input.trim() || loading}
-                style={{ width: 36, height: 36, borderRadius: 9, flexShrink: 0, border: "none", cursor: input.trim() && !loading ? "pointer" : "default", background: input.trim() && !loading ? "linear-gradient(135deg, #15803D, #4ADE80)" : "rgba(255,255,255,0.04)", color: input.trim() && !loading ? "#fff" : "#2D3748", fontSize: 15, transition: "all 0.2s" }}>↑</button>
+                style={{ width: 36, height: 36, borderRadius: 9, flexShrink: 0, border: "none", cursor: input.trim() && !loading ? "pointer" : "default", background: input.trim() && !loading ? "linear-gradient(135deg,#15803D,#4ADE80)" : "rgba(255,255,255,0.04)", color: input.trim() && !loading ? "#fff" : "#2D3748", fontSize: 15, transition: "all 0.2s" }}>↑</button>
             </div>
             <p style={{ fontSize: 10, color: "#1a2a1a", textAlign: "center", marginTop: 7 }}>Enter para enviar · Shift+Enter para nueva línea</p>
           </div>
