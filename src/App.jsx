@@ -36,14 +36,8 @@ async function searchGemini(query) {
         })
       }
     );
-    if (res.status === 429) {
-      console.warn("Gemini rate limit (429) — continuando sin noticias.");
-      return null;
-    }
-    if (!res.ok) {
-      console.warn("Gemini error:", res.status);
-      return null;
-    }
+    if (res.status === 429) { console.warn("Gemini rate limit (429)"); return null; }
+    if (!res.ok) { console.warn("Gemini error:", res.status); return null; }
     const data = await res.json();
     return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
   } catch (e) {
@@ -53,7 +47,7 @@ async function searchGemini(query) {
 }
 
 // ── SHEETS: inbox ─────────────────────────────────────────────────────────────
-async function fetchInboxAlerts(clientName) {
+async function fetchInboxAlerts() {
   try {
     const url = `https://sheets.googleapis.com/v4/spreadsheets/${INBOX_SHEET_ID}/values/Inbox%20General?key=${GOOGLE_API_KEY}`;
     const res = await fetch(url);
@@ -68,8 +62,7 @@ async function fetchInboxAlerts(clientName) {
     const iResumen = headers.indexOf("resumen");
     const iTipo = headers.indexOf("tipo");
     return rows.slice(1)
-      .filter(row => !clientName || (row[iCliente] || "").toLowerCase().includes(clientName.toLowerCase()))
-      .slice(-20)
+      .slice(-50)
       .reverse()
       .map(row => ({
         cliente: row[iCliente] || "",
@@ -186,7 +179,6 @@ function buildSystemPrompt(client, driveFiles, newsContext, journalists) {
 }
 
 // ── COMPONENTES ───────────────────────────────────────────────────────────────
-
 function TypingDots() {
   return (
     <div style={{ display: "flex", gap: 5, padding: "12px 16px", background: "rgba(255,255,255,0.04)", borderRadius: 14, width: "fit-content", border: "1px solid rgba(255,255,255,0.06)" }}>
@@ -197,45 +189,6 @@ function TypingDots() {
   );
 }
 
-// ── MARKDOWN RENDERER (fix principal) ────────────────────────────────────────
-function renderMarkdown(text) {
-  return text.split("\n").map((line, i) => {
-    // Encabezados
-    if (line.startsWith("### ")) return <div key={i} style={{ fontSize: 13, fontWeight: 700, color: "#86EFAC", margin: "10px 0 3px", textTransform: "uppercase", letterSpacing: "0.05em" }}>{line.slice(4)}</div>;
-    if (line.startsWith("## ")) return <div key={i} style={{ fontSize: 14, fontWeight: 700, color: "#4ADE80", margin: "12px 0 4px" }}>{line.slice(3)}</div>;
-    if (line.startsWith("# ")) return <div key={i} style={{ fontSize: 16, fontWeight: 700, color: "#4ADE80", margin: "14px 0 5px" }}>{line.slice(2)}</div>;
-    // Listas
-    if (line.startsWith("- ") || line.startsWith("• ") || line.startsWith("· ")) {
-      return (
-        <div key={i} style={{ display: "flex", gap: 8, paddingLeft: 8, margin: "3px 0" }}>
-          <span style={{ color: "#4ADE80", flexShrink: 0 }}>·</span>
-          <span style={{ color: "#CBD5E1" }}>{renderInline(line.slice(2))}</span>
-        </div>
-      );
-    }
-    // Listas numeradas
-    if (line.match(/^\d+\. /)) {
-      return <div key={i} style={{ color: "#CBD5E1", paddingLeft: 8, margin: "3px 0" }}>{renderInline(line)}</div>;
-    }
-    // Flechas →
-    if (line.startsWith("→ ")) {
-      return (
-        <div key={i} style={{ display: "flex", gap: 8, paddingLeft: 8, margin: "3px 0" }}>
-          <span style={{ color: "#60A5FA", flexShrink: 0 }}>→</span>
-          <span style={{ color: "#CBD5E1" }}>{renderInline(line.slice(2))}</span>
-        </div>
-      );
-    }
-    // Separador
-    if (line.startsWith("---")) return <hr key={i} style={{ border: "none", borderTop: "1px solid rgba(255,255,255,0.07)", margin: "10px 0" }} />;
-    // Línea vacía
-    if (line.trim() === "") return <div key={i} style={{ height: 6 }} />;
-    // Párrafo normal
-    return <div key={i} style={{ color: "#CBD5E1", margin: "2px 0", lineHeight: 1.65 }}>{renderInline(line)}</div>;
-  });
-}
-
-// Renderiza bold (**texto**) e inline code (`texto`) dentro de una línea
 function renderInline(text) {
   const parts = text.split(/(\*\*.*?\*\*|`.*?`)/g);
   return parts.map((part, i) => {
@@ -249,6 +202,34 @@ function renderInline(text) {
   });
 }
 
+function renderMarkdown(text) {
+  return text.split("\n").map((line, i) => {
+    if (line.startsWith("### ")) return <div key={i} style={{ fontSize: 13, fontWeight: 700, color: "#86EFAC", margin: "10px 0 3px", textTransform: "uppercase", letterSpacing: "0.05em" }}>{line.slice(4)}</div>;
+    if (line.startsWith("## ")) return <div key={i} style={{ fontSize: 14, fontWeight: 700, color: "#4ADE80", margin: "12px 0 4px" }}>{line.slice(3)}</div>;
+    if (line.startsWith("# ")) return <div key={i} style={{ fontSize: 16, fontWeight: 700, color: "#4ADE80", margin: "14px 0 5px" }}>{line.slice(2)}</div>;
+    if (line.startsWith("- ") || line.startsWith("• ") || line.startsWith("· ")) {
+      return (
+        <div key={i} style={{ display: "flex", gap: 8, paddingLeft: 8, margin: "3px 0" }}>
+          <span style={{ color: "#4ADE80", flexShrink: 0 }}>·</span>
+          <span style={{ color: "#CBD5E1" }}>{renderInline(line.slice(2))}</span>
+        </div>
+      );
+    }
+    if (line.match(/^\d+\. /)) return <div key={i} style={{ color: "#CBD5E1", paddingLeft: 8, margin: "3px 0" }}>{renderInline(line)}</div>;
+    if (line.startsWith("→ ")) {
+      return (
+        <div key={i} style={{ display: "flex", gap: 8, paddingLeft: 8, margin: "3px 0" }}>
+          <span style={{ color: "#60A5FA", flexShrink: 0 }}>→</span>
+          <span style={{ color: "#CBD5E1" }}>{renderInline(line.slice(2))}</span>
+        </div>
+      );
+    }
+    if (line.startsWith("---")) return <hr key={i} style={{ border: "none", borderTop: "1px solid rgba(255,255,255,0.07)", margin: "10px 0" }} />;
+    if (line.trim() === "") return <div key={i} style={{ height: 6 }} />;
+    return <div key={i} style={{ color: "#CBD5E1", margin: "2px 0", lineHeight: 1.65 }}>{renderInline(line)}</div>;
+  });
+}
+
 function MessageBubble({ msg }) {
   const isUser = msg.role === "user";
   return (
@@ -257,41 +238,38 @@ function MessageBubble({ msg }) {
         <div style={{ width: 32, height: 32, borderRadius: 9, background: "linear-gradient(135deg, #14532D, #22C55E)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, marginRight: 9, flexShrink: 0, marginTop: 2 }}>✦</div>
       )}
       <div style={{ maxWidth: "75%", padding: isUser ? "10px 15px" : "14px 17px", background: isUser ? "linear-gradient(135deg, #14532D, #166534)" : "rgba(255,255,255,0.03)", borderRadius: isUser ? "17px 17px 4px 17px" : "4px 17px 17px 17px", border: isUser ? "none" : "1px solid rgba(255,255,255,0.06)", fontSize: 13.5, lineHeight: 1.6 }}>
-        {isUser
-          ? <span style={{ color: "#DCFCE7" }}>{msg.content}</span>
-          : <div>{renderMarkdown(msg.content)}</div>
-        }
+        {isUser ? <span style={{ color: "#DCFCE7" }}>{msg.content}</span> : <div>{renderMarkdown(msg.content)}</div>}
       </div>
     </div>
   );
 }
 
 // ── REPORTE MATUTINO ──────────────────────────────────────────────────────────
-function ReportScreen({ onGoToClient, allowedClients, clients }) {
-  const [expanded, setExpanded] = useState(null);
-  const [inboxData, setInboxData] = useState({});
+function ReportScreen({ onGoToClient, clients }) {
+  const [alerts, setAlerts] = useState([]);
   const [loadingInbox, setLoadingInbox] = useState(true);
+  const [expanded, setExpanded] = useState(null);
   const fecha = new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
   useEffect(() => {
     const load = async () => {
       setLoadingInbox(true);
-      const allAlerts = await fetchInboxAlerts("");
-      const byClient = {};
-      allAlerts.forEach(a => {
-        const key = a.cliente;
-        if (!byClient[key]) byClient[key] = [];
-        byClient[key].push(a);
-      });
-      setInboxData(byClient);
+      const data = await fetchInboxAlerts();
+      setAlerts(data);
       setLoadingInbox(false);
     };
     load();
   }, []);
 
-  const visibleClients = clients.filter(c => allowedClients.includes("*") || allowedClients.includes(c.id));
-  const allAlerts = Object.values(inboxData).flat();
-  const hasAlerts = allAlerts.some(a => a.tipo === "alerta");
+  const hasAlerts = alerts.some(a => a.tipo === "alerta");
+
+  const fuenteStyle = (fuente) => {
+    const f = (fuente || "").toLowerCase();
+    if (f.includes("sentione")) return { bg: "rgba(251,191,36,0.1)", color: "#FBBF24", label: "SentiOne" };
+    if (f.includes("google") || f.includes("alert")) return { bg: "rgba(96,165,250,0.1)", color: "#60A5FA", label: "Google Alerts" };
+    if (f.includes("lupita")) return { bg: "rgba(74,222,128,0.1)", color: "#4ADE80", label: "Lupita" };
+    return { bg: "rgba(156,163,175,0.1)", color: "#9CA3AF", label: fuente };
+  };
 
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "32px 20px", animation: "lupIn 0.4s ease" }}>
@@ -301,62 +279,71 @@ function ReportScreen({ onGoToClient, allowedClients, clients }) {
         <p style={{ fontSize: 12, color: "#374151", margin: 0, textTransform: "capitalize" }}>{fecha}</p>
       </div>
 
+      {/* Resumen general */}
       <div style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 14, padding: "16px 18px", marginBottom: 20, display: "flex", gap: 12 }}>
         <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg, #14532D, #22C55E)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0 }}>✦</div>
         <div>
           <div style={{ fontSize: 11, color: "#4ADE80", fontWeight: 700, marginBottom: 4 }}>RESUMEN LUPITA</div>
           <div style={{ fontSize: 13, color: "#CBD5E1", lineHeight: 1.6 }}>
-            {loadingInbox ? "Cargando alertas recientes..." : hasAlerts ? "Hay alertas activas. Revisa los clientes marcados." : `Sin alertas críticas hoy. ${allAlerts.length} menciones registradas.`}
+            {loadingInbox ? "Cargando alertas recientes..." : hasAlerts ? "Hay alertas activas hoy." : `Sin alertas críticas hoy. ${alerts.length} registros en monitoreo.`}
           </div>
         </div>
       </div>
 
-      {visibleClients.map((c, idx) => {
-        const clientAlerts = Object.entries(inboxData)
-          .filter(([key]) => key.toLowerCase().includes(c.name.toLowerCase()) || c.name.toLowerCase().includes(key.toLowerCase()) || key === "General")
-          .flatMap(([, alerts]) => alerts);
-        const hasAlert = clientAlerts.some(a => a.tipo === "alerta");
+      {/* Botones rápidos a chat por cliente */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+        {clients.map(c => (
+          <button key={c.id} onClick={() => onGoToClient(c.id)}
+            style={{ background: `${c.color}12`, border: `1px solid ${c.color}33`, color: c.color, borderRadius: 10, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
+            {c.initials} → Chat {c.name.split(" ")[0]}
+          </button>
+        ))}
+      </div>
 
-        return (
-          <div key={c.id} style={{ background: "rgba(255,255,255,0.02)", border: `1px solid ${hasAlert ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.06)"}`, borderRadius: 16, marginBottom: 12, overflow: "hidden", animation: `lupIn 0.4s ease ${idx * 0.08}s both` }}>
-            <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 12, cursor: "pointer" }} onClick={() => setExpanded(expanded === c.id ? null : c.id)}>
-              <div style={{ width: 38, height: 38, borderRadius: 10, background: c.color + "18", border: `1.5px solid ${c.color}33`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, color: c.color, flexShrink: 0 }}>{c.initials}</div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#E2E8F0", marginBottom: 3 }}>{c.name}</div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 11, color: "#4B5563" }}>{clientAlerts.length} alertas registradas</span>
-                  {hasAlert && <span style={{ fontSize: 10, color: "#FCA5A5", background: "rgba(239,68,68,0.1)", padding: "2px 7px", borderRadius: 20 }}>⚠ Alerta</span>}
+      {/* Lista cronológica de todas las alertas */}
+      <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, overflow: "hidden" }}>
+        <div style={{ padding: "14px 18px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 14 }}>📋</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#E2E8F0" }}>Todas las alertas</span>
+          <span style={{ fontSize: 11, color: "#4B5563", marginLeft: "auto" }}>{alerts.length} registros</span>
+        </div>
+
+        {loadingInbox ? (
+          <div style={{ padding: "32px", textAlign: "center", color: "#4B5563", fontSize: 13 }}>Cargando...</div>
+        ) : alerts.length === 0 ? (
+          <div style={{ padding: "32px", textAlign: "center", color: "#4B5563", fontSize: 13 }}>Sin alertas registradas aún.</div>
+        ) : (
+          alerts.map((a, i) => {
+            const fs = fuenteStyle(a.fuente);
+            const isExp = expanded === i;
+            return (
+              <div key={i} style={{ borderBottom: "1px solid rgba(255,255,255,0.03)", cursor: a.resumen ? "pointer" : "default" }}
+                onClick={() => a.resumen && setExpanded(isExp ? null : i)}>
+                <div style={{ padding: "12px 18px", display: "flex", gap: 12, alignItems: "flex-start" }}>
+                  <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 90 }}>
+                    <span style={{ fontSize: 10, padding: "2px 8px", background: fs.bg, color: fs.color, borderRadius: 20, whiteSpace: "nowrap" }}>{fs.label}</span>
+                    <span style={{ fontSize: 10, color: "#4B5563" }}>{(a.fecha || "").slice(0, 10)}</span>
+                    {a.cliente && a.cliente !== "General" && (
+                      <span style={{ fontSize: 9, color: "#6B7280", textAlign: "center", maxWidth: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.cliente}</span>
+                    )}
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 4 }}>{a.asunto}</div>
+                    {a.resumen && (
+                      <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.6 }}>
+                        {isExp ? a.resumen : a.resumen.slice(0, 200) + (a.resumen.length > 200 ? "..." : "")}
+                      </div>
+                    )}
+                    {a.resumen && a.resumen.length > 200 && (
+                      <div style={{ fontSize: 11, color: "#4ADE80", marginTop: 5 }}>{isExp ? "▲ Ver menos" : "▼ Ver más"}</div>
+                    )}
+                  </div>
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 7 }}>
-                <button onClick={(e) => { e.stopPropagation(); onGoToClient(c.id); }} style={{ background: `${c.color}15`, border: `1px solid ${c.color}33`, color: c.color, borderRadius: 8, padding: "5px 11px", fontSize: 11, cursor: "pointer" }}>Ir a chat →</button>
-                <span style={{ color: "#4B5563", fontSize: 14, padding: "5px" }}>{expanded === c.id ? "▲" : "▼"}</span>
-              </div>
-            </div>
-
-            {expanded === c.id && (
-              <div style={{ borderTop: "1px solid rgba(255,255,255,0.04)", padding: "16px 18px" }}>
-                {clientAlerts.length === 0 ? (
-                  <div style={{ fontSize: 13, color: "#4B5563", textAlign: "center", padding: "20px 0" }}>Sin alertas registradas aún.</div>
-                ) : (
-                  clientAlerts.map((a, i) => (
-                    <div key={i} style={{ display: "flex", gap: 10, padding: "10px 0", borderBottom: "1px solid rgba(255,255,255,0.03)" }}>
-                      <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                        <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(96,165,250,0.1)", color: "#60A5FA", borderRadius: 20 }}>{a.fuente}</span>
-                        <span style={{ fontSize: 10, color: "#4B5563" }}>{a.fecha?.slice(0, 10)}</span>
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 3 }}>{a.asunto}</div>
-                        <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.5 }}>{a.resumen?.slice(0, 600)}</div>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }
@@ -434,7 +421,6 @@ export default function LupitaApp() {
     setNewsContext(null);
     setJournalists([]);
     setJournalistsStatus("Cargando periodistas...");
-
     try {
       const [files, news, journalistsList] = await Promise.all([
         loadClientContext(client.folderId),
@@ -527,7 +513,6 @@ export default function LupitaApp() {
     session_expired: "Tu sesión expiró. Inicia sesión nuevamente.",
   };
 
-  // ── LOADING ────────────────────────────────────────────────────────────────
   if (authState === "loading") return (
     <div style={{ minHeight: "100vh", background: "#07090C", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <style>{`@keyframes lupSpin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }`}</style>
@@ -538,7 +523,6 @@ export default function LupitaApp() {
     </div>
   );
 
-  // ── LOGIN ──────────────────────────────────────────────────────────────────
   if (authState === "login") return (
     <div style={{ minHeight: "100vh", background: "#07090C", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Georgia', serif", padding: 20 }}>
       <style>{`@keyframes lupIn { from{opacity:0;transform:translateY(14px)} to{opacity:1;transform:none} } button:hover { opacity: 0.92; }`}</style>
@@ -564,7 +548,6 @@ export default function LupitaApp() {
     </div>
   );
 
-  // ── UNAUTHORIZED ───────────────────────────────────────────────────────────
   if (authState === "unauthorized") return (
     <div style={{ minHeight: "100vh", background: "#07090C", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Georgia', serif", padding: 20 }}>
       <div style={{ maxWidth: 400, width: "100%", textAlign: "center" }}>
@@ -580,7 +563,6 @@ export default function LupitaApp() {
     ? () => { setScreen("home"); setMessages([]); setActiveClient(null); setDriveFiles([]); setNewsContext(null); setJournalists([]); setJournalistsStatus(""); }
     : screen === "reporte" ? () => setScreen("home") : null;
 
-  // ── MAIN APP ───────────────────────────────────────────────────────────────
   return (
     <div style={{ minHeight: "100vh", background: "#07090C", fontFamily: "'Georgia', serif", color: "#E2E8F0" }}>
       <style>{`
@@ -702,7 +684,7 @@ export default function LupitaApp() {
       )}
 
       {/* REPORTE */}
-      {screen === "reporte" && <ReportScreen onGoToClient={goToClient} allowedClients={currentUser?.clients || []} clients={CLIENTS} />}
+      {screen === "reporte" && <ReportScreen onGoToClient={goToClient} clients={CLIENTS} />}
 
       {/* CHAT */}
       {screen === "chat" && (
