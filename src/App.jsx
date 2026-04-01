@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -14,12 +14,12 @@ const ALL_CLIENTS = [
 ];
 
 const ACTIONS = [
-  { id: "comunicado", icon: "📋", label: "Comunicado de prensa", color: "#4ADE80", prompt: (c) => `Necesito redactar un comunicado de prensa para ${c.name}. Primero pregúntame qué información necesitas para redactarlo. Una vez que tengas todo y redactes el comunicado, al final sugiere a qué periodistas de la base enviarlo agrupado por sector con nombre, medio y correo.` },
-  { id: "pitch", icon: "🎯", label: "Pitch para periodista", color: "#60A5FA", prompt: (c) => `Necesito un pitch para un periodista sobre ${c.name}. Usa el contexto que tienes del cliente para personalizarlo.` },
-  { id: "distribucion", icon: "📬", label: "Sugerir distribución", color: "#A78BFA", prompt: (c) => `El comunicado para ${c.name} está listo. Con base en la base de periodistas que tienes disponible, recomiéndame a quién enviarlo agrupado por sector con nombre, medio y correo.` },
-  { id: "posts", icon: "📱", label: "Posts redes sociales", color: "#F472B6", prompt: (c) => `Quiero crear posts para redes sociales de ${c.name}. Usa el tono y mensajes clave del cliente.` },
-  { id: "talking", icon: "🎤", label: "Talking points vocero", color: "#FBBF24", prompt: (c) => `Necesito preparar talking points para el vocero de ${c.name}. Usa el contexto del cliente para personalizar.` },
-  { id: "crisis", icon: "⚠️", label: "Crisis statement", color: "#FB923C", prompt: (c) => `Necesito un crisis statement para ${c.name}. ¿Cuáles son los detalles de la situación?` },
+  { id: "comunicado", icon: "📋", label: "Comunicado de prensa", color: "#4ADE80", tipo: "comunicado", prompt: (c) => `Necesito redactar un comunicado de prensa para ${c.name}. Primero pregúntame qué información necesitas para redactarlo. Una vez que tengas todo y redactes el comunicado, al final sugiere a qué periodistas de la base enviarlo agrupado por sector con nombre, medio y correo.` },
+  { id: "pitch", icon: "🎯", label: "Pitch para periodista", color: "#60A5FA", tipo: "pitch", prompt: (c) => `Necesito un pitch para un periodista sobre ${c.name}. Usa el contexto que tienes del cliente para personalizarlo.` },
+  { id: "distribucion", icon: "📬", label: "Sugerir distribución", color: "#A78BFA", tipo: null, prompt: (c) => `El comunicado para ${c.name} está listo. Con base en la base de periodistas que tienes disponible, recomiéndame a quién enviarlo agrupado por sector con nombre, medio y correo.` },
+  { id: "posts", icon: "📱", label: "Posts redes sociales", color: "#F472B6", tipo: null, prompt: (c) => `Quiero crear posts para redes sociales de ${c.name}. Usa el tono y mensajes clave del cliente.` },
+  { id: "talking", icon: "🎤", label: "Talking points vocero", color: "#FBBF24", tipo: null, prompt: (c) => `Necesito preparar talking points para el vocero de ${c.name}. Usa el contexto del cliente para personalizar.` },
+  { id: "crisis", icon: "⚠️", label: "Crisis statement", color: "#FB923C", tipo: null, prompt: (c) => `Necesito un crisis statement para ${c.name}. ¿Cuáles son los detalles de la situación?` },
 ];
 
 // ── GEMINI ────────────────────────────────────────────────────────────────────
@@ -68,6 +68,19 @@ async function fetchInboxAlerts() {
       tipo: row[iTipo] || "",
     }));
   } catch (e) { console.warn("Sheets fetch failed:", e); return []; }
+}
+
+// ── MEMORY: guardar en Sheets ─────────────────────────────────────────────────
+async function saveToMemory(sheet, row) {
+  try {
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${MEMORY_SHEET_ID}/values/${encodeURIComponent(sheet)}:append?valueInputOption=USER_ENTERED&key=${GOOGLE_API_KEY}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ values: [row] })
+    });
+    return res.ok;
+  } catch (e) { console.warn("Memory save failed:", e); return false; }
 }
 
 // ── SHEETS: periodistas ───────────────────────────────────────────────────────
@@ -158,26 +171,20 @@ function buildSystemPrompt(client, driveFiles, newsContext, journalists) {
   const fileSection = driveFiles.length > 0
     ? `\n\nARCHIVOS DEL CLIENTE EN DRIVE:\n` + driveFiles.map(f => `\n--- ${f.name} ---\n${f.content}`).join("\n")
     : "\n\n(No se encontraron archivos en Drive para este cliente aún.)";
-  const newsSection = newsContext ? `\n\nCONTEXTO DE NOTICIAS Y TENDENCIAS DEL SECTOR (actualizado hoy):\n${newsContext}` : "";
+  const newsSection = newsContext ? `\n\nCONTEXTO DE NOTICIAS Y TENDENCIAS DEL SECTOR:\n${newsContext}` : "";
   const journalistsSection = formatJournalistsContext(journalists || []);
-  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma.\n\nCLIENTE ACTIVO: ${client.name}\nIndustria: ${client.industry}\n${fileSection}${newsSection}${journalistsSection}\n\nINSTRUCCIONES:\n- Siempre escribes en español\n- Usas la información de los archivos de Drive como base para todo el contenido\n- Cuando generes pitches o comunicados, usa las tendencias del sector para hacer el contenido más relevante\n- La BASE DE PERIODISTAS DE NEUMA siempre está disponible en tu contexto. Úsala directamente\n- Cuando sugieras distribución usa ÚNICAMENTE los periodistas de esa base con nombre, medio y correo exactos\n- Nunca inventas información del cliente\n- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica`;
+  return `Eres Lupita, agente especializada en Relaciones Públicas para la agencia Neuma.\n\nCLIENTE ACTIVO: ${client.name}\nIndustria: ${client.industry}\n${fileSection}${newsSection}${journalistsSection}\n\nINSTRUCCIONES:\n- Siempre escribes en español\n- Usas la información de los archivos de Drive como base para todo el contenido\n- La BASE DE PERIODISTAS DE NEUMA siempre está disponible. Úsala directamente\n- Cuando sugieras distribución usa ÚNICAMENTE los periodistas de esa base\n- Nunca inventas información del cliente\n- Respetas regulaciones sanitarias (COFEPRIS, FDA, EMA) cuando aplica`;
 }
 
 // ── HELPERS ───────────────────────────────────────────────────────────────────
-function isGoogleAlert(fuente) {
-  return (fuente || "").toLowerCase().includes("google");
-}
-
-function isSentiOne(fuente) {
-  return (fuente || "").toLowerCase().includes("sentione") || (fuente || "").toLowerCase().includes("lupita");
-}
+function isGoogleAlert(fuente) { return (fuente || "").toLowerCase().includes("google"); }
+function isSentiOne(fuente) { return (fuente || "").toLowerCase().includes("sentione") || (fuente || "").toLowerCase().includes("lupita"); }
 
 function isRecent(fechaStr, horas = 6) {
   if (!fechaStr) return false;
   try {
     const fecha = new Date(fechaStr);
-    const ahora = new Date();
-    const diff = (ahora - fecha) / (1000 * 60 * 60);
+    const diff = (new Date() - fecha) / (1000 * 60 * 60);
     return diff <= horas;
   } catch { return false; }
 }
@@ -186,6 +193,14 @@ function fuenteStyle(fuente) {
   if (isSentiOne(fuente)) return { bg: "rgba(251,191,36,0.1)", color: "#FBBF24", label: "SentiOne" };
   if (isGoogleAlert(fuente)) return { bg: "rgba(96,165,250,0.1)", color: "#60A5FA", label: "Google Alerts" };
   return { bg: "rgba(156,163,175,0.1)", color: "#9CA3AF", label: fuente || "—" };
+}
+
+function detectMemoryType(content) {
+  const lower = content.toLowerCase();
+  if (lower.includes("comunicado") || lower.includes("boletín")) return "comunicado";
+  if (lower.includes("pitch")) return "pitch";
+  if (lower.includes("cobertura") || lower.includes("nota publicada") || lower.includes("salió en")) return "cobertura";
+  return null;
 }
 
 // ── MARKDOWN ──────────────────────────────────────────────────────────────────
@@ -219,13 +234,55 @@ function TypingDots() {
   );
 }
 
-function MessageBubble({ msg }) {
-  const isUser = msg.role === "user";
+// ── MEMORY SAVE BANNER ────────────────────────────────────────────────────────
+function MemoryBanner({ type, clientName, content, onSave, onDismiss }) {
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [title, setTitle] = useState("");
+
+  const typeLabels = { comunicado: "📋 Comunicado", pitch: "🎯 Pitch", cobertura: "📰 Cobertura" };
+  const typeSheets = { comunicado: "Campañas", pitch: "Pitches", cobertura: "Cobertura" };
+
+  const handleSave = async () => {
+    setSaving(true);
+    const fecha = new Date().toLocaleDateString("es-MX");
+    let row;
+    if (type === "comunicado") row = [fecha, clientName, title || "Sin título", "Comunicado", "Borrador", content.slice(0, 200)];
+    else if (type === "pitch") row = [fecha, clientName, "", "", title || "Sin título", "Enviado", content.slice(0, 200)];
+    else row = [fecha, clientName, title || "Sin título", "", "", "", "", content.slice(0, 200)];
+    const ok = await onSave(typeSheets[type], row);
+    setSaving(false);
+    if (ok) { setSaved(true); setTimeout(onDismiss, 2000); }
+  };
+
+  if (saved) return (
+    <div style={{ background: "rgba(74,222,128,0.1)", border: "1px solid rgba(74,222,128,0.3)", borderRadius: 12, padding: "12px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
+      <span style={{ color: "#4ADE80", fontSize: 16 }}>✓</span>
+      <span style={{ fontSize: 13, color: "#4ADE80" }}>Guardado en Lupita Memory</span>
+    </div>
+  );
+
   return (
-    <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", marginBottom: 14, animation: "lupFadeUp 0.28s ease" }}>
-      {!isUser && <div style={{ width: 32, height: 32, borderRadius: 9, background: "linear-gradient(135deg, #14532D, #22C55E)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, marginRight: 9, flexShrink: 0, marginTop: 2 }}>✦</div>}
-      <div style={{ maxWidth: "75%", padding: isUser ? "10px 15px" : "14px 17px", background: isUser ? "linear-gradient(135deg, #14532D, #166534)" : "rgba(255,255,255,0.03)", borderRadius: isUser ? "17px 17px 4px 17px" : "4px 17px 17px 17px", border: isUser ? "none" : "1px solid rgba(255,255,255,0.06)", fontSize: 13.5, lineHeight: 1.6 }}>
-        {isUser ? <span style={{ color: "#DCFCE7" }}>{msg.content}</span> : <div>{renderMarkdown(msg.content)}</div>}
+    <div style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: 12, padding: "14px 16px", marginBottom: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span style={{ fontSize: 13, color: "#FBBF24", fontWeight: 600 }}>💾 ¿Guardar en Lupita Memory?</span>
+        <span style={{ fontSize: 11, color: "#4B5563" }}>{typeLabels[type]} · {clientName}</span>
+      </div>
+      <input
+        value={title}
+        onChange={e => setTitle(e.target.value)}
+        placeholder={`Título del ${type}...`}
+        style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "7px 10px", color: "#E2E8F0", fontSize: 12, marginBottom: 10, boxSizing: "border-box" }}
+      />
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={handleSave} disabled={saving}
+          style={{ background: "rgba(251,191,36,0.15)", border: "1px solid rgba(251,191,36,0.3)", color: "#FBBF24", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
+          {saving ? "Guardando..." : "💾 Guardar"}
+        </button>
+        <button onClick={onDismiss}
+          style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "#4B5563", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
+          No ahora
+        </button>
       </div>
     </div>
   );
@@ -234,22 +291,21 @@ function MessageBubble({ msg }) {
 // ── REPORTE MATUTINO ──────────────────────────────────────────────────────────
 function ReportScreen({ onGoToClient, clients }) {
   const [alerts, setAlerts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loadingAlerts, setLoadingAlerts] = useState(true);
   const [expanded, setExpanded] = useState(null);
   const fecha = new Date().toLocaleDateString("es-MX", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
   useEffect(() => {
     const load = async () => {
-      setLoading(true);
+      setLoadingAlerts(true);
       const data = await fetchInboxAlerts();
       setAlerts(data);
-      setLoading(false);
+      setLoadingAlerts(false);
     };
     load();
   }, []);
 
   const liveAlerts = alerts.filter(a => isGoogleAlert(a.fuente) && isRecent(a.fecha, 6));
-  const allAlerts = alerts;
   const hasAlerts = alerts.some(a => a.tipo === "alerta");
 
   return (
@@ -260,18 +316,16 @@ function ReportScreen({ onGoToClient, clients }) {
         <p style={{ fontSize: 12, color: "#374151", margin: 0, textTransform: "capitalize" }}>{fecha}</p>
       </div>
 
-      {/* Resumen Lupita */}
       <div style={{ background: "rgba(74,222,128,0.05)", border: "1px solid rgba(74,222,128,0.15)", borderRadius: 14, padding: "16px 18px", marginBottom: 20, display: "flex", gap: 12 }}>
         <div style={{ width: 28, height: 28, borderRadius: 8, background: "linear-gradient(135deg, #14532D, #22C55E)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0 }}>✦</div>
         <div>
           <div style={{ fontSize: 11, color: "#4ADE80", fontWeight: 700, marginBottom: 4 }}>RESUMEN LUPITA</div>
           <div style={{ fontSize: 13, color: "#CBD5E1", lineHeight: 1.6 }}>
-            {loading ? "Cargando alertas..." : hasAlerts ? "Hay alertas activas hoy." : `Sin alertas críticas hoy. ${allAlerts.length} registros en monitoreo.`}
+            {loadingAlerts ? "Cargando alertas..." : hasAlerts ? "Hay alertas activas hoy." : `Sin alertas críticas hoy. ${alerts.length} registros en monitoreo.`}
           </div>
         </div>
       </div>
 
-      {/* Botones rápidos */}
       <div style={{ display: "flex", gap: 8, marginBottom: 24, flexWrap: "wrap" }}>
         {clients.map(c => (
           <button key={c.id} onClick={() => onGoToClient(c.id)}
@@ -281,7 +335,6 @@ function ReportScreen({ onGoToClient, clients }) {
         ))}
       </div>
 
-      {/* 🔴 EN VIVO — Google Alerts recientes */}
       {liveAlerts.length > 0 && (
         <div style={{ marginBottom: 24 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
@@ -306,20 +359,18 @@ function ReportScreen({ onGoToClient, clients }) {
         </div>
       )}
 
-      {/* 📋 TODAS LAS ALERTAS */}
       <div style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 16, overflow: "hidden" }}>
         <div style={{ padding: "14px 18px", borderBottom: "1px solid rgba(255,255,255,0.05)", display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 14 }}>📋</span>
           <span style={{ fontSize: 13, fontWeight: 600, color: "#E2E8F0" }}>Historial de alertas</span>
-          <span style={{ fontSize: 11, color: "#4B5563", marginLeft: "auto" }}>{allAlerts.length} registros</span>
+          <span style={{ fontSize: 11, color: "#4B5563", marginLeft: "auto" }}>{alerts.length} registros</span>
         </div>
-
-        {loading ? (
+        {loadingAlerts ? (
           <div style={{ padding: "32px", textAlign: "center", color: "#4B5563", fontSize: 13 }}>Cargando...</div>
-        ) : allAlerts.length === 0 ? (
+        ) : alerts.length === 0 ? (
           <div style={{ padding: "32px", textAlign: "center", color: "#4B5563", fontSize: 13 }}>Sin alertas registradas aún.</div>
         ) : (
-          allAlerts.map((a, i) => {
+          alerts.map((a, i) => {
             const fs = fuenteStyle(a.fuente);
             const isExp = expanded === i;
             return (
@@ -332,14 +383,8 @@ function ReportScreen({ onGoToClient, clients }) {
                   </div>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 4 }}>{a.asunto}</div>
-                    {a.resumen && (
-                      <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.6 }}>
-                        {isExp ? a.resumen : a.resumen.slice(0, 200) + (a.resumen.length > 200 ? "..." : "")}
-                      </div>
-                    )}
-                    {a.resumen && a.resumen.length > 200 && (
-                      <div style={{ fontSize: 11, color: "#4ADE80", marginTop: 5 }}>{isExp ? "▲ Ver menos" : "▼ Ver más"}</div>
-                    )}
+                    {a.resumen && <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.6 }}>{isExp ? a.resumen : a.resumen.slice(0, 200) + (a.resumen.length > 200 ? "..." : "")}</div>}
+                    {a.resumen && a.resumen.length > 200 && <div style={{ fontSize: 11, color: "#4ADE80", marginTop: 5 }}>{isExp ? "▲ Ver menos" : "▼ Ver más"}</div>}
                   </div>
                 </div>
               </div>
@@ -357,6 +402,7 @@ export default function LupitaApp() {
   const [currentUser, setCurrentUser] = useState(null);
   const [screen, setScreen] = useState("home");
   const [activeClient, setActiveClient] = useState(null);
+  const [activeAction, setActiveAction] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -369,6 +415,7 @@ export default function LupitaApp() {
   const [copied, setCopied] = useState(false);
   const [urlError, setUrlError] = useState(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [memoryBanner, setMemoryBanner] = useState(null);
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const systemPromptRef = useRef("");
@@ -385,23 +432,14 @@ export default function LupitaApp() {
   const checkSession = async () => {
     try {
       const res = await fetch("/api/auth/session");
-      if (res.ok) {
-        const user = await res.json();
-        setCurrentUser(user);
-        setAuthState("authorized");
-      } else {
-        const data = await res.json();
-        setAuthState(data.error === "user_not_authorized" ? "unauthorized" : "login");
-      }
+      if (res.ok) { const user = await res.json(); setCurrentUser(user); setAuthState("authorized"); }
+      else { const data = await res.json(); setAuthState(data.error === "user_not_authorized" ? "unauthorized" : "login"); }
     } catch { setAuthState("login"); }
   };
 
   const handleLogout = async () => {
     await fetch("/api/auth/logout");
-    setCurrentUser(null);
-    setAuthState("login");
-    setScreen("home");
-    setShowUserMenu(false);
+    setCurrentUser(null); setAuthState("login"); setScreen("home"); setShowUserMenu(false);
   };
 
   const CLIENTS = currentUser?.clients
@@ -419,11 +457,10 @@ export default function LupitaApp() {
     setActiveClient(client); setScreen("chat"); setLoadingDrive(true);
     setDriveStatus("Cargando Drive y noticias del sector..."); setMessages([]);
     setNewsContext(null); setJournalists([]); setJournalistsStatus("Cargando periodistas...");
+    setMemoryBanner(null); setActiveAction(null);
     try {
       const [files, news, journalistsList] = await Promise.all([
-        loadClientContext(client.folderId),
-        searchGemini(client.searchQuery),
-        fetchJournalists(client.sectors || [client.industry])
+        loadClientContext(client.folderId), searchGemini(client.searchQuery), fetchJournalists(client.sectors || [client.industry])
       ]);
       setDriveFiles(files); setNewsContext(news); setJournalists(journalistsList);
       setJournalistsStatus(`${journalistsList.length} periodistas relevantes`);
@@ -439,20 +476,31 @@ export default function LupitaApp() {
     setLoadingDrive(false);
   };
 
-  const sendMessage = async (text) => {
+  const sendMessage = async (text, actionTipo = null) => {
     const userText = text || input.trim();
     if (!userText || loading) return;
     setInput("");
+    if (actionTipo) setActiveAction(actionTipo);
     const newMsgs = [...messages, { role: "user", content: userText }];
-    setMessages(newMsgs); setLoading(true);
+    setMessages(newMsgs); setLoading(true); setMemoryBanner(null);
     try {
       const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, system: systemPromptRef.current, messages: newMsgs.map(m => ({ role: m.role, content: m.content })) }) });
       const data = await res.json();
       const reply = data.content?.map(b => b.text).join("") || "Error al obtener respuesta.";
       setMessages(prev => [...prev, { role: "assistant", content: reply }]);
+
+      // Detectar si se generó algo guardable
+      const tipo = actionTipo || detectMemoryType(reply);
+      if (tipo && (tipo === "comunicado" || tipo === "pitch") && reply.length > 200) {
+        setTimeout(() => setMemoryBanner({ type: tipo, content: reply }), 500);
+      }
     } catch { setMessages(prev => [...prev, { role: "assistant", content: "Error de conexión. Intenta de nuevo." }]); }
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 100);
+  };
+
+  const handleMemorySave = async (sheet, row) => {
+    return await saveToMemory(sheet, row);
   };
 
   const copyLast = () => {
@@ -527,7 +575,7 @@ export default function LupitaApp() {
   );
 
   const backAction = screen === "chat"
-    ? () => { setScreen("home"); setMessages([]); setActiveClient(null); setDriveFiles([]); setNewsContext(null); setJournalists([]); setJournalistsStatus(""); }
+    ? () => { setScreen("home"); setMessages([]); setActiveClient(null); setDriveFiles([]); setNewsContext(null); setJournalists([]); setJournalistsStatus(""); setMemoryBanner(null); }
     : screen === "reporte" ? () => setScreen("home") : null;
 
   return (
@@ -540,6 +588,7 @@ export default function LupitaApp() {
         @keyframes lupSpin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
         textarea{resize:none;} textarea:focus{outline:none;}
         ::-webkit-scrollbar{width:3px} ::-webkit-scrollbar-thumb{background:#1a2a1a;border-radius:3px}
+        input:focus{outline:none;}
       `}</style>
 
       {/* HEADER */}
@@ -567,7 +616,7 @@ export default function LupitaApp() {
               {driveStatus && <span style={{ fontSize: 10, color: loadingDrive ? "#FBBF24" : "#4ADE80", display: "flex", alignItems: "center", gap: 5 }}>{loadingDrive ? <span style={{ display: "inline-block", width: 8, height: 8, border: "1.5px solid #FBBF24", borderTopColor: "transparent", borderRadius: "50%", animation: "lupSpin 0.7s linear infinite" }} /> : <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ADE80", display: "inline-block" }} />}{driveStatus}</span>}
               <button onClick={refreshDrive} disabled={loadingDrive} style={{ background: "rgba(74,222,128,0.06)", border: "1px solid rgba(74,222,128,0.15)", color: "#4ADE80", borderRadius: 8, padding: "5px 11px", fontSize: 11, cursor: "pointer" }}>↻ Drive</button>
               <button onClick={copyLast} style={{ background: "rgba(74,222,128,0.07)", border: "1px solid rgba(74,222,128,0.18)", color: "#4ADE80", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>{copied ? "✓ Copiado" : "📋 Copiar"}</button>
-              <button onClick={() => setMessages([{ role: "assistant", content: `¡Listo para seguir con **${activeClient.name}**! ¿Qué necesitas ahora?` }])} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", color: "#666", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>Nueva conv.</button>
+              <button onClick={() => { setMessages([{ role: "assistant", content: `¡Listo para seguir con **${activeClient.name}**! ¿Qué necesitas ahora?` }]); setMemoryBanner(null); }} style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)", color: "#666", borderRadius: 8, padding: "5px 13px", fontSize: 11, cursor: "pointer" }}>Nueva conv.</button>
             </>
           )}
           {screen === "home" && canSeeReport && (
@@ -666,10 +715,22 @@ export default function LupitaApp() {
             )}
             <div ref={bottomRef} />
           </div>
+
+          {/* Memory Banner */}
+          {memoryBanner && !loading && (
+            <MemoryBanner
+              type={memoryBanner.type}
+              clientName={activeClient?.name}
+              content={memoryBanner.content}
+              onSave={handleMemorySave}
+              onDismiss={() => setMemoryBanner(null)}
+            />
+          )}
+
           {!loading && (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", paddingBottom: 8 }}>
               {ACTIONS.map(a => (
-                <button key={a.id} onClick={() => sendMessage(a.prompt(activeClient))}
+                <button key={a.id} onClick={() => sendMessage(a.prompt(activeClient), a.tipo)}
                   style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 20, padding: "5px 12px", fontSize: 11, color: "#4B5563", cursor: "pointer", transition: "all 0.15s" }}
                   onMouseEnter={e => { e.currentTarget.style.color = a.color; e.currentTarget.style.borderColor = a.color + "44"; }}
                   onMouseLeave={e => { e.currentTarget.style.color = "#4B5563"; e.currentTarget.style.borderColor = "rgba(255,255,255,0.06)"; }}
