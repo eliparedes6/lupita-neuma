@@ -67,7 +67,6 @@ async function saveToMemory(sheet, row) {
   } catch { return false; }
 }
 
-
 async function fetchJournalists(sectors) {
   try {
     const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${JOURNALISTS_SHEET_ID}/values/Directorio?key=${GOOGLE_API_KEY}`);
@@ -151,6 +150,7 @@ function renderInline(text) {
 }
 
 function renderMarkdown(text) {
+  if (!text) return null;
   return text.split("\n").map((line, i) => {
     if (line.startsWith("### ")) return <div key={i} style={{ fontSize: 13, fontWeight: 700, color: "#86EFAC", margin: "10px 0 3px" }}>{line.slice(4)}</div>;
     if (line.startsWith("## ")) return <div key={i} style={{ fontSize: 14, fontWeight: 700, color: "#4ADE80", margin: "12px 0 4px" }}>{line.slice(3)}</div>;
@@ -284,7 +284,8 @@ function ReportScreen({ onGoToClient, clients }) {
                 <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(96,165,250,0.1)", color: "#60A5FA", borderRadius: 20, flexShrink: 0 }}>Google Alerts</span>
                 <div>
                   <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 3 }}>{a.asunto}</div>
-                  {a.resumen && <div style={{ fontSize: 12, color: "#9CA3AF" }}>{a.resumen.slice(0, 150)}</div>}
+                  {/* CAMBIO 1: renderMarkdown en preview EN VIVO */}
+                  {a.resumen && <div style={{ fontSize: 12, color: "#9CA3AF" }}>{renderMarkdown(a.resumen.slice(0, 150))}</div>}
                 </div>
               </div>
             </div>
@@ -314,7 +315,8 @@ function ReportScreen({ onGoToClient, clients }) {
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 4 }}>{a.asunto}</div>
-                  {a.resumen && <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.6 }}>{isExp ? renderMarkdown(a.resumen) : a.resumen.slice(0, 200) + (a.resumen.length > 200 ? "..." : "")}</div>}
+                  {/* CAMBIO 2: renderMarkdown en preview e historial expandido */}
+                  {a.resumen && <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.6 }}>{isExp ? renderMarkdown(a.resumen) : renderMarkdown(a.resumen.slice(0, 200) + (a.resumen.length > 200 ? "..." : ""))}</div>}
                   {a.resumen && a.resumen.length > 200 && <div style={{ fontSize: 11, color: "#4ADE80", marginTop: 4 }}>{isExp ? "▲ Ver menos" : "▼ Ver más"}</div>}
                 </div>
               </div>
