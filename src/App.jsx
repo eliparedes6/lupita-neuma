@@ -314,7 +314,7 @@ function ReportScreen({ onGoToClient, clients }) {
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 4 }}>{a.asunto}</div>
-                  {a.resumen && <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.6 }}>{isExp ? a.resumen : a.resumen.slice(0, 200) + (a.resumen.length > 200 ? "..." : "")}</div>}
+                  {a.resumen && <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.6 }}>{isExp ? renderMarkdown(a.resumen) : a.resumen.slice(0, 200) + (a.resumen.length > 200 ? "..." : "")}</div>}
                   {a.resumen && a.resumen.length > 200 && <div style={{ fontSize: 11, color: "#4ADE80", marginTop: 4 }}>{isExp ? "▲ Ver menos" : "▼ Ver más"}</div>}
                 </div>
               </div>
