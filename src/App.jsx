@@ -6,6 +6,8 @@ const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 const INBOX_SHEET_ID = "1iinP_KunZ3eNyM9olU6aY_BhOyGrVSjn6t0T9cGnb3c";
 const JOURNALISTS_SHEET_ID = "1mY8b69fPrt_GfNK8Rn_-02vD1zIUj01pKxy5R1m-p_0";
 const MEMORY_SHEET_ID = "1NtAYwQzfvG6FHHg-HrQrthOhf3020aDgGRf7n-11vKc";
+const WEBHOOK_MEMORY = "https://hook.eu1.make.com/ddwic3f7m54545tz5r1q5m8svbcysoxx";
+const WEBHOOK_DRIVE = "https://hook.eu1.make.com/m0atexmpusketxj97179j9ga6gm7lphr";
 
 const ALL_CLIENTS = [
   { id: "pfizer", name: "Pfizer México", industry: "Farmacéutica", color: "#4A90D9", initials: "PF", folderId: "1Z0iOscR22coaCxWLHNlGFMFUb6GLES69", searchQuery: "Pfizer México farmacéutica salud noticias", sectors: ["salud", "negocios", "general"] },
@@ -18,9 +20,20 @@ const ACTIONS = [
   { id: "pitch", icon: "🎯", label: "Pitch para periodista", color: "#60A5FA", tipo: "pitch", prompt: (c) => `Necesito un pitch para un periodista sobre ${c.name}. Usa el contexto que tienes del cliente para personalizarlo.` },
   { id: "distribucion", icon: "📬", label: "Sugerir distribución", color: "#A78BFA", tipo: null, prompt: (c) => `El comunicado para ${c.name} está listo. Con base en la base de periodistas que tienes disponible, recomiéndame a quién enviarlo agrupado por sector con nombre, medio y correo.` },
   { id: "posts", icon: "📱", label: "Posts redes sociales", color: "#F472B6", tipo: null, prompt: (c) => `Quiero crear posts para redes sociales de ${c.name}. Usa el tono y mensajes clave del cliente.` },
-  { id: "talking", icon: "🎤", label: "Talking points vocero", color: "#FBBF24", tipo: null, prompt: (c) => `Necesito preparar talking points para el vocero de ${c.name}. Usa el contexto del cliente para personalizar.` },
-  { id: "crisis", icon: "⚠️", label: "Crisis statement", color: "#FB923C", tipo: null, prompt: (c) => `Necesito un crisis statement para ${c.name}. ¿Cuáles son los detalles de la situación?` },
+  { id: "talking", icon: "🎤", label: "Talking points vocero", color: "#FBBF24", tipo: "talking", prompt: (c) => `Necesito preparar talking points para el vocero de ${c.name}. Usa el contexto del cliente para personalizar.` },
+  { id: "crisis", icon: "⚠️", label: "Crisis statement", color: "#FB923C", tipo: "crisis", prompt: (c) => `Necesito un crisis statement para ${c.name}. ¿Cuáles son los detalles de la situación?` },
+  { id: "brief", icon: "🗒️", label: "Brief de entrevista", color: "#34D399", tipo: "brief", prompt: (c) => `Necesito preparar un brief de entrevista para ${c.name}. ¿Cuál es el medio, periodista y tema de la entrevista?` },
+  { id: "vocero", icon: "👤", label: "Perfil de vocero", color: "#818CF8", tipo: "vocero", prompt: (c) => `Necesito crear o actualizar el perfil de un vocero de ${c.name}. ¿Cuál es el nombre y cargo del vocero?` },
 ];
+
+const MEMORY_TYPES = {
+  comunicado: { label: "📋 Comunicado", tipo: "Comunicado" },
+  pitch:      { label: "🎯 Pitch", tipo: "Pitch" },
+  crisis:     { label: "⚠️ Crisis Statement", tipo: "Crisis" },
+  talking:    { label: "🎤 Talking Points", tipo: "Talking Points" },
+  brief:      { label: "🗒️ Brief de Entrevista", tipo: "Brief de Entrevista" },
+  vocero:     { label: "👤 Perfil de Vocero", tipo: "Perfil de Vocero" },
+};
 
 // ── API FUNCTIONS ─────────────────────────────────────────────────────────────
 
@@ -56,9 +69,20 @@ async function fetchInboxAlerts() {
   } catch { return []; }
 }
 
+async function saveToDrive({ clientId, clientName, title, content, tipo, fecha }) {
+  try {
+    const res = await fetch(WEBHOOK_DRIVE, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ clientId, clientName, title, content, tipo, fecha })
+    });
+    return res.ok;
+  } catch { return false; }
+}
+
 async function saveToMemory(sheet, row) {
   try {
-    const res = await fetch("https://hook.eu1.make.com/ddwic3f7m54545tz5r1q5m8svbcysoxx", {
+    const res = await fetch(WEBHOOK_MEMORY, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sheet, row })
@@ -120,11 +144,56 @@ function buildSystemPrompt(client, driveFiles, newsContext, journalists) {
   return `Eres Lupita, agente de Relaciones Públicas para la agencia Neuma.\n\nCLIENTE: ${client.name} (${client.industry})\n${files}${news}${jCtx}\n\nInstrucciones: Escribe siempre en español. Usa los archivos de Drive como base. La base de periodistas siempre está disponible — úsala directamente. Nunca inventes información. Respeta regulaciones sanitarias (COFEPRIS).`;
 }
 
-function detectMemoryType(content) {
+function detectMemoryType(content, actionTipo) {
+  if (actionTipo) return actionTipo;
   const l = content.toLowerCase();
   if (l.includes("comunicado") || l.includes("boletín")) return "comunicado";
   if (l.includes("pitch")) return "pitch";
+  if (l.includes("crisis") || l.includes("statement")) return "crisis";
+  if (l.includes("talking point")) return "talking";
+  if (l.includes("brief") || l.includes("entrevista")) return "brief";
+  if (l.includes("vocero") || l.includes("perfil")) return "vocero";
   return null;
+}
+
+// ── DESCARGAR WORD ────────────────────────────────────────────────────────────
+
+function downloadAsWord(content, title, clientName, tipo) {
+  const fecha = new Date().toLocaleDateString("es-MX");
+  const htmlContent = `
+    <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+    <head><meta charset='utf-8'><title>${title}</title>
+    <style>
+      body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; margin: 2cm; color: #1a1a1a; }
+      h1 { font-size: 16pt; color: #14532D; margin-bottom: 4pt; }
+      h2 { font-size: 13pt; color: #166534; margin-top: 16pt; margin-bottom: 4pt; }
+      h3 { font-size: 11pt; color: #166534; margin-top: 12pt; margin-bottom: 4pt; }
+      p { line-height: 1.5; margin: 6pt 0; }
+      .meta { color: #6B7280; font-size: 9pt; margin-bottom: 20pt; border-bottom: 1pt solid #E5E7EB; padding-bottom: 8pt; }
+    </style>
+    </head>
+    <body>
+      <h1>${title}</h1>
+      <div class='meta'>${tipo} · ${clientName} · ${fecha}</div>
+      ${content.split('\n').map(line => {
+        if (line.startsWith('# ')) return `<h1>${line.slice(2)}</h1>`;
+        if (line.startsWith('## ')) return `<h2>${line.slice(3)}</h2>`;
+        if (line.startsWith('### ')) return `<h3>${line.slice(4)}</h3>`;
+        if (line.startsWith('- ') || line.startsWith('• ')) return `<p>• ${line.slice(2).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p>`;
+        if (line.trim() === '') return '<br>';
+        return `<p>${line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p>`;
+      }).join('')}
+    </body></html>
+  `;
+  const blob = new Blob(['\ufeff', htmlContent], { type: 'application/msword;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${(title || tipo).replace(/[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑ\s]/g, '').trim()}_${clientName}_${fecha.replace(/\//g, '-')}.doc`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function isGoogleAlert(fuente) { return (fuente || "").toLowerCase().includes("google"); }
@@ -186,44 +255,77 @@ function MessageBubble({ msg }) {
   );
 }
 
-function MemoryBanner({ type, clientName, content, onSave, onDismiss }) {
+function MemoryBanner({ type, clientId, clientName, content, onDismiss }) {
   const [saving, setSaving] = useState(false);
+  const [savingDrive, setSavingDrive] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [savedDrive, setSavedDrive] = useState(false);
+  const [downloaded, setDownloaded] = useState(false);
   const [title, setTitle] = useState("");
-  const typeLabels = { comunicado: "📋 Comunicado", pitch: "🎯 Pitch" };
-  const typeSheets = { comunicado: "Campañas", pitch: "Pitches" };
 
-  const handleSave = async () => {
+  const memConfig = MEMORY_TYPES[type] || { label: "📄 Contenido", tipo: "General" };
+  const fecha = new Date().toLocaleDateString("es-MX");
+
+  const handleSaveMemory = async () => {
+    if (!title.trim()) return;
     setSaving(true);
-    const fecha = new Date().toLocaleDateString("es-MX");
-    const row = type === "comunicado"
-      ? [fecha, clientName, title || "Sin título", "Comunicado", "Borrador", content.slice(0, 200)]
-      : [fecha, clientName, "", "", title || "Sin título", "Enviado", content.slice(0, 200)];
-    const ok = await onSave(typeSheets[type], row);
+    const row = [fecha, clientName, title, memConfig.tipo, "Borrador", content.slice(0, 500)];
+    const ok = await saveToMemory("Campañas", row);
     setSaving(false);
-    if (ok) { setSaved(true); setTimeout(onDismiss, 2000); }
+    if (ok) setSaved(true);
   };
 
-  if (saved) return (
+  const handleSaveDrive = async () => {
+    if (!title.trim()) return;
+    setSavingDrive(true);
+    const ok = await saveToDrive({ clientId, clientName, title, content, tipo: memConfig.tipo, fecha });
+    setSavingDrive(false);
+    if (ok) { setSavedDrive(true); setTimeout(onDismiss, 2500); }
+  };
+
+  const handleDownload = () => {
+    const titleToUse = title.trim() || `${memConfig.tipo} ${clientName}`;
+    downloadAsWord(content, titleToUse, clientName, memConfig.tipo);
+    setDownloaded(true);
+    setTimeout(() => setDownloaded(false), 3000);
+  };
+
+  if (savedDrive) return (
     <div style={{ background: "rgba(74,222,128,0.1)", border: "1px solid rgba(74,222,128,0.3)", borderRadius: 12, padding: "12px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
       <span style={{ color: "#4ADE80", fontSize: 16 }}>✓</span>
-      <span style={{ fontSize: 13, color: "#4ADE80" }}>Guardado en Lupita Memory</span>
+      <span style={{ fontSize: 13, color: "#4ADE80" }}>Guardado en Drive y registrado en Lupita Memory</span>
     </div>
   );
 
   return (
     <div style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: 12, padding: "14px 16px", marginBottom: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <span style={{ fontSize: 13, color: "#FBBF24", fontWeight: 600 }}>💾 ¿Guardar en Lupita Memory?</span>
-        <span style={{ fontSize: 11, color: "#4B5563" }}>{typeLabels[type]} · {clientName}</span>
+        <span style={{ fontSize: 13, color: "#FBBF24", fontWeight: 600 }}>💾 ¿Qué hacemos con este contenido?</span>
+        <span style={{ fontSize: 11, color: "#4B5563" }}>{memConfig.label} · {clientName}</span>
       </div>
-      <input value={title} onChange={e => setTitle(e.target.value)} placeholder={`Título del ${type}...`}
-        style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "7px 10px", color: "#E2E8F0", fontSize: 12, marginBottom: 10, boxSizing: "border-box", outline: "none" }} />
-      <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={handleSave} disabled={saving} style={{ background: "rgba(251,191,36,0.15)", border: "1px solid rgba(251,191,36,0.3)", color: "#FBBF24", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
-          {saving ? "Guardando..." : "💾 Guardar"}
+      <input
+        value={title}
+        onChange={e => setTitle(e.target.value)}
+        placeholder={`Título del ${memConfig.tipo.toLowerCase()}...`}
+        style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "7px 10px", color: "#E2E8F0", fontSize: 12, marginBottom: 10, boxSizing: "border-box", outline: "none" }}
+      />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <button onClick={handleDownload}
+          style={{ background: "rgba(96,165,250,0.15)", border: "1px solid rgba(96,165,250,0.3)", color: "#60A5FA", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
+          {downloaded ? "✓ Descargado" : "📥 Descargar Word"}
         </button>
-        <button onClick={onDismiss} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "#4B5563", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>No ahora</button>
+        <button onClick={handleSaveDrive} disabled={savingDrive || !title.trim()}
+          style={{ background: title.trim() ? "rgba(74,222,128,0.15)" : "rgba(255,255,255,0.03)", border: `1px solid ${title.trim() ? "rgba(74,222,128,0.3)" : "rgba(255,255,255,0.06)"}`, color: title.trim() ? "#4ADE80" : "#4B5563", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: title.trim() ? "pointer" : "default" }}>
+          {savingDrive ? "Guardando..." : savedDrive ? "✓ Guardado" : "☁️ Guardar en Drive"}
+        </button>
+        <button onClick={handleSaveMemory} disabled={saving || !title.trim()}
+          style={{ background: title.trim() ? "rgba(251,191,36,0.15)" : "rgba(255,255,255,0.03)", border: `1px solid ${title.trim() ? "rgba(251,191,36,0.3)" : "rgba(255,255,255,0.06)"}`, color: title.trim() ? "#FBBF24" : "#4B5563", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: title.trim() ? "pointer" : "default" }}>
+          {saving ? "Guardando..." : saved ? "✓ En Memory" : "💾 Solo en Memory"}
+        </button>
+        <button onClick={onDismiss}
+          style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "#4B5563", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
+          No ahora
+        </button>
       </div>
     </div>
   );
@@ -284,7 +386,6 @@ function ReportScreen({ onGoToClient, clients }) {
                 <span style={{ fontSize: 10, padding: "2px 8px", background: "rgba(96,165,250,0.1)", color: "#60A5FA", borderRadius: 20, flexShrink: 0 }}>Google Alerts</span>
                 <div>
                   <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 3 }}>{a.asunto}</div>
-                  {/* CAMBIO 1: renderMarkdown en preview EN VIVO */}
                   {a.resumen && <div style={{ fontSize: 12, color: "#9CA3AF" }}>{renderMarkdown(a.resumen.slice(0, 150))}</div>}
                 </div>
               </div>
@@ -315,7 +416,6 @@ function ReportScreen({ onGoToClient, clients }) {
                 </div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 12.5, fontWeight: 600, color: "#E2E8F0", marginBottom: 4 }}>{a.asunto}</div>
-                  {/* CAMBIO 2: renderMarkdown en preview e historial expandido */}
                   {a.resumen && <div style={{ fontSize: 12, color: "#6B7280", lineHeight: 1.6 }}>{isExp ? renderMarkdown(a.resumen) : renderMarkdown(a.resumen.slice(0, 200) + (a.resumen.length > 200 ? "..." : ""))}</div>}
                   {a.resumen && a.resumen.length > 200 && <div style={{ fontSize: 11, color: "#4ADE80", marginTop: 4 }}>{isExp ? "▲ Ver menos" : "▼ Ver más"}</div>}
                 </div>
@@ -417,7 +517,7 @@ export default function LupitaApp() {
       const data = await res.json();
       const reply = data.content?.map(b => b.text).join("") || "Error al obtener respuesta.";
       setMessages(prev => [...prev, { role: "assistant", content: reply }]);
-      const tipo = actionTipo || detectMemoryType(reply);
+      const tipo = detectMemoryType(reply, actionTipo);
       if (tipo && reply.length > 300) setTimeout(() => setMemoryBanner({ type: tipo, content: reply }), 600);
     } catch { setMessages(prev => [...prev, { role: "assistant", content: "Error de conexión." }]); }
     setLoading(false);
@@ -608,8 +708,13 @@ export default function LupitaApp() {
           </div>
 
           {memoryBanner && !loading && (
-            <MemoryBanner type={memoryBanner.type} clientName={activeClient?.name} content={memoryBanner.content}
-              onSave={saveToMemory} onDismiss={() => setMemoryBanner(null)} />
+            <MemoryBanner
+              type={memoryBanner.type}
+              clientId={activeClient?.id}
+              clientName={activeClient?.name}
+              content={memoryBanner.content}
+              onDismiss={() => setMemoryBanner(null)}
+            />
           )}
 
           {!loading && (
