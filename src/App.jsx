@@ -69,15 +69,17 @@ async function fetchInboxAlerts() {
   } catch { return []; }
 }
 
-async function saveToDrive({ clientId, clientName, title, content, tipo, fecha }) {
+async function createGoogleDoc({ clientId, clientName, title, content, tipo, fecha }) {
   try {
     const res = await fetch(WEBHOOK_DRIVE, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ clientId, clientName, title, content, tipo, fecha })
     });
-    return res.ok;
-  } catch { return false; }
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.docId || null;
+  } catch { return null; }
 }
 
 async function saveToMemory(sheet, row) {
@@ -156,46 +158,6 @@ function detectMemoryType(content, actionTipo) {
   return null;
 }
 
-// ── DESCARGAR WORD ────────────────────────────────────────────────────────────
-
-function downloadAsWord(content, title, clientName, tipo) {
-  const fecha = new Date().toLocaleDateString("es-MX");
-  const htmlContent = `
-    <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
-    <head><meta charset='utf-8'><title>${title}</title>
-    <style>
-      body { font-family: Calibri, Arial, sans-serif; font-size: 11pt; margin: 2cm; color: #1a1a1a; }
-      h1 { font-size: 16pt; color: #14532D; margin-bottom: 4pt; }
-      h2 { font-size: 13pt; color: #166534; margin-top: 16pt; margin-bottom: 4pt; }
-      h3 { font-size: 11pt; color: #166534; margin-top: 12pt; margin-bottom: 4pt; }
-      p { line-height: 1.5; margin: 6pt 0; }
-      .meta { color: #6B7280; font-size: 9pt; margin-bottom: 20pt; border-bottom: 1pt solid #E5E7EB; padding-bottom: 8pt; }
-    </style>
-    </head>
-    <body>
-      <h1>${title}</h1>
-      <div class='meta'>${tipo} · ${clientName} · ${fecha}</div>
-      ${content.split('\n').map(line => {
-        if (line.startsWith('# ')) return `<h1>${line.slice(2)}</h1>`;
-        if (line.startsWith('## ')) return `<h2>${line.slice(3)}</h2>`;
-        if (line.startsWith('### ')) return `<h3>${line.slice(4)}</h3>`;
-        if (line.startsWith('- ') || line.startsWith('• ')) return `<p>• ${line.slice(2).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p>`;
-        if (line.trim() === '') return '<br>';
-        return `<p>${line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</p>`;
-      }).join('')}
-    </body></html>
-  `;
-  const blob = new Blob(['\ufeff', htmlContent], { type: 'application/msword;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `${(title || tipo).replace(/[^a-zA-Z0-9áéíóúñÁÉÍÓÚÑ\s]/g, '').trim()}_${clientName}_${fecha.replace(/\//g, '-')}.doc`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
 function isGoogleAlert(fuente) { return (fuente || "").toLowerCase().includes("google"); }
 function isSentiOne(fuente) { return (fuente || "").toLowerCase().includes("sentione") || (fuente || "").toLowerCase().includes("lupita"); }
 function isRecent(fechaStr, horas = 6) {
@@ -256,77 +218,72 @@ function MessageBubble({ msg }) {
 }
 
 function MemoryBanner({ type, clientId, clientName, content, onDismiss }) {
-  const [saving, setSaving] = useState(false);
-  const [savingDrive, setSavingDrive] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [savedDrive, setSavedDrive] = useState(false);
-  const [downloaded, setDownloaded] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [docId, setDocId] = useState(null);
+  const [error, setError] = useState(false);
   const [title, setTitle] = useState("");
 
   const memConfig = MEMORY_TYPES[type] || { label: "📄 Contenido", tipo: "General" };
   const fecha = new Date().toLocaleDateString("es-MX");
 
-  const handleSaveMemory = async () => {
+  const handleOpenInDoc = async () => {
     if (!title.trim()) return;
-    setSaving(true);
-    const row = [fecha, clientName, title, memConfig.tipo, "Borrador", content.slice(0, 500)];
-    const ok = await saveToMemory("Campañas", row);
-    setSaving(false);
-    if (ok) setSaved(true);
+    setCreating(true);
+    setError(false);
+    const id = await createGoogleDoc({ clientId, clientName, title, content, tipo: memConfig.tipo, fecha });
+    setCreating(false);
+    if (id) {
+      setDocId(id);
+      window.open(`https://docs.google.com/document/d/${id}/edit`, "_blank");
+    } else {
+      setError(true);
+    }
   };
 
-  const handleSaveDrive = async () => {
-    if (!title.trim()) return;
-    setSavingDrive(true);
-    const ok = await saveToDrive({ clientId, clientName, title, content, tipo: memConfig.tipo, fecha });
-    setSavingDrive(false);
-    if (ok) { setSavedDrive(true); setTimeout(onDismiss, 2500); }
+  const handleOpenAgain = () => {
+    if (docId) window.open(`https://docs.google.com/document/d/${docId}/edit`, "_blank");
   };
-
-  const handleDownload = () => {
-    const titleToUse = title.trim() || `${memConfig.tipo} ${clientName}`;
-    downloadAsWord(content, titleToUse, clientName, memConfig.tipo);
-    setDownloaded(true);
-    setTimeout(() => setDownloaded(false), 3000);
-  };
-
-  if (savedDrive) return (
-    <div style={{ background: "rgba(74,222,128,0.1)", border: "1px solid rgba(74,222,128,0.3)", borderRadius: 12, padding: "12px 16px", marginBottom: 12, display: "flex", alignItems: "center", gap: 10 }}>
-      <span style={{ color: "#4ADE80", fontSize: 16 }}>✓</span>
-      <span style={{ fontSize: 13, color: "#4ADE80" }}>Guardado en Drive y registrado en Lupita Memory</span>
-    </div>
-  );
 
   return (
     <div style={{ background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.2)", borderRadius: 12, padding: "14px 16px", marginBottom: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <span style={{ fontSize: 13, color: "#FBBF24", fontWeight: 600 }}>💾 ¿Qué hacemos con este contenido?</span>
+        <span style={{ fontSize: 13, color: "#FBBF24", fontWeight: 600 }}>📝 ¿Editar este contenido?</span>
         <span style={{ fontSize: 11, color: "#4B5563" }}>{memConfig.label} · {clientName}</span>
       </div>
-      <input
-        value={title}
-        onChange={e => setTitle(e.target.value)}
-        placeholder={`Título del ${memConfig.tipo.toLowerCase()}...`}
-        style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "7px 10px", color: "#E2E8F0", fontSize: 12, marginBottom: 10, boxSizing: "border-box", outline: "none" }}
-      />
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button onClick={handleDownload}
-          style={{ background: "rgba(96,165,250,0.15)", border: "1px solid rgba(96,165,250,0.3)", color: "#60A5FA", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
-          {downloaded ? "✓ Descargado" : "📥 Descargar Word"}
-        </button>
-        <button onClick={handleSaveDrive} disabled={savingDrive || !title.trim()}
-          style={{ background: title.trim() ? "rgba(74,222,128,0.15)" : "rgba(255,255,255,0.03)", border: `1px solid ${title.trim() ? "rgba(74,222,128,0.3)" : "rgba(255,255,255,0.06)"}`, color: title.trim() ? "#4ADE80" : "#4B5563", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: title.trim() ? "pointer" : "default" }}>
-          {savingDrive ? "Guardando..." : savedDrive ? "✓ Guardado" : "☁️ Guardar en Drive"}
-        </button>
-        <button onClick={handleSaveMemory} disabled={saving || !title.trim()}
-          style={{ background: title.trim() ? "rgba(251,191,36,0.15)" : "rgba(255,255,255,0.03)", border: `1px solid ${title.trim() ? "rgba(251,191,36,0.3)" : "rgba(255,255,255,0.06)"}`, color: title.trim() ? "#FBBF24" : "#4B5563", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: title.trim() ? "pointer" : "default" }}>
-          {saving ? "Guardando..." : saved ? "✓ En Memory" : "💾 Solo en Memory"}
-        </button>
-        <button onClick={onDismiss}
-          style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "#4B5563", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
-          No ahora
-        </button>
-      </div>
+
+      {!docId ? (
+        <>
+          <input
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            placeholder={`Título del ${memConfig.tipo.toLowerCase()}...`}
+            style={{ width: "100%", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "7px 10px", color: "#E2E8F0", fontSize: 12, marginBottom: 10, boxSizing: "border-box", outline: "none" }}
+          />
+          {error && <div style={{ fontSize: 11, color: "#F87171", marginBottom: 8 }}>⚠ Error al crear el Doc. Intenta de nuevo.</div>}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={handleOpenInDoc} disabled={creating || !title.trim()}
+              style={{ background: title.trim() ? "rgba(74,222,128,0.15)" : "rgba(255,255,255,0.03)", border: `1px solid ${title.trim() ? "rgba(74,222,128,0.3)" : "rgba(255,255,255,0.06)"}`, color: title.trim() ? "#4ADE80" : "#4B5563", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: title.trim() ? "pointer" : "default" }}>
+              {creating ? "Creando Doc..." : "✏️ Abrir en Google Doc"}
+            </button>
+            <button onClick={onDismiss}
+              style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "#4B5563", borderRadius: 8, padding: "6px 14px", fontSize: 12, cursor: "pointer" }}>
+              No ahora
+            </button>
+          </div>
+        </>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: "#4ADE80" }}>✓ Doc creado en Drive — "{title}"</span>
+          <button onClick={handleOpenAgain}
+            style={{ background: "rgba(74,222,128,0.1)", border: "1px solid rgba(74,222,128,0.25)", color: "#4ADE80", borderRadius: 8, padding: "5px 12px", fontSize: 11, cursor: "pointer" }}>
+            🔗 Abrir de nuevo
+          </button>
+          <button onClick={onDismiss}
+            style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.08)", color: "#4B5563", borderRadius: 8, padding: "5px 12px", fontSize: 11, cursor: "pointer" }}>
+            Cerrar
+          </button>
+        </div>
+      )}
     </div>
   );
 }
