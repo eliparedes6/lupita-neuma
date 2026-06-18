@@ -1,6 +1,14 @@
 // api/auth/callback.js
 // Vercel Function — maneja el callback de Google OAuth
 
+import { createHmac } from "crypto";
+
+function signPayload(payload) {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) throw new Error("SESSION_SECRET no configurado");
+  return createHmac("sha256", secret).update(payload).digest("hex");
+}
+
 export default async function handler(req, res) {
   const { code } = req.query;
 
@@ -48,7 +56,9 @@ export default async function handler(req, res) {
       exp: Date.now() + 8 * 60 * 60 * 1000, // 8 horas
     };
 
-    const sessionToken = Buffer.from(JSON.stringify(sessionData)).toString("base64");
+    const payload = Buffer.from(JSON.stringify(sessionData)).toString("base64");
+    const sig = signPayload(payload);
+    const sessionToken = `${payload}.${sig}`;
 
     // Guardar en cookie segura
     res.setHeader("Set-Cookie", [
