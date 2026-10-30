@@ -6,8 +6,6 @@ const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 const INBOX_SHEET_ID = "1iinP_KunZ3eNyM9olU6aY_BhOyGrVSjn6t0T9cGnb3c";
 const JOURNALISTS_SHEET_ID = "1mY8b69fPrt_GfNK8Rn_-02vD1zIUj01pKxy5R1m-p_0";
 const MEMORY_SHEET_ID = "1NtAYwQzfvG6FHHg-HrQrthOhf3020aDgGRf7n-11vKc";
-const WEBHOOK_MEMORY = "https://hook.eu1.make.com/ddwic3f7m54545tz5r1q5m8svbcysoxx";
-const WEBHOOK_DRIVE = "https://hook.eu1.make.com/m0atexmpusketxj97179j9ga6gm7lphr";
 
 const ALL_CLIENTS = [
   { id: "pfizer", name: "Pfizer México", industry: "Farmacéutica", color: "#4A90D9", initials: "PF", folderId: "1Z0iOscR22coaCxWLHNlGFMFUb6GLES69", searchQuery: "Pfizer México farmacéutica salud noticias", sectors: ["salud", "negocios", "general"] },
@@ -71,7 +69,7 @@ async function fetchInboxAlerts() {
 
 async function createGoogleDoc({ clientId, clientName, title, content, tipo, fecha }) {
   try {
-    const res = await fetch(WEBHOOK_DRIVE, {
+    const res = await fetch("/api/drive-doc", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ clientId, clientName, title, content, tipo, fecha })
@@ -84,7 +82,7 @@ async function createGoogleDoc({ clientId, clientName, title, content, tipo, fec
 
 async function saveToMemory(sheet, row) {
   try {
-    const res = await fetch(WEBHOOK_MEMORY, {
+    const res = await fetch("/api/memory", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ sheet, row })
@@ -470,7 +468,7 @@ export default function LupitaApp() {
     const newMsgs = [...messages, { role: "user", content: userText }];
     setMessages(newMsgs); setLoading(true); setMemoryBanner(null);
     try {
-      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 1500, system: systemPromptRef.current, messages: newMsgs.map(m => ({ role: m.role, content: m.content })) }) });
+      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 1500, system: systemPromptRef.current, messages: newMsgs.map(m => ({ role: m.role, content: m.content })) }) });
       const data = await res.json();
       const reply = data.content?.map(b => b.text).join("") || "Error al obtener respuesta.";
       setMessages(prev => [...prev, { role: "assistant", content: reply }]);
