@@ -22,7 +22,7 @@ export default async function handler(req, res) {
     const response = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "createDoc", clientId, clientName, title, content, tipo, fecha }),
+      body: JSON.stringify({ action: "createDoc", clientId, clientName, title, content, tipo, fecha, token: process.env.APPS_SCRIPT_TOKEN }),
     });
 
     if (!response.ok) return res.status(502).json({ error: "webhook_failed" });
