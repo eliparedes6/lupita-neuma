@@ -2,15 +2,13 @@ import { useState, useRef, useEffect } from "react";
 
 const GOOGLE_API_KEY = import.meta.env.VITE_GOOGLE_API_KEY;
 const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
-const INBOX_SHEET_ID = "1iinP_KunZ3eNyM9olU6aY_BhOyGrVSjn6t0T9cGnb3c";
 const JOURNALISTS_SHEET_ID = "1mY8b69fPrt_GfNK8Rn_-02vD1zIUj01pKxy5R1m-p_0";
 const MEMORY_SHEET_ID = "1NtAYwQzfvG6FHHg-HrQrthOhf3020aDgGRf7n-11vKc";
 
 const ALL_CLIENTS = [
-  { id: "pfizer", name: "Pfizer México", industry: "Farmacéutica", color: "#4A90D9", initials: "PF", folderId: "1Z0iOscR22coaCxWLHNlGFMFUb6GLES69", searchQuery: "Pfizer México farmacéutica salud noticias", sectors: ["salud", "negocios", "general"] },
-  { id: "prudence", name: "Condones Prudence", industry: "Salud Sexual", color: "#D62B7C", initials: "PR", folderId: "1VJyRHA5VHyb9Ea6-kK9Iob0ZzQpsiWu0", searchQuery: "salud sexual México condones planificación familiar noticias", sectors: ["salud", "estilo de vida", "general"] },
-  { id: "soriana", name: "Organización Soriana", industry: "Retail", color: "#C8102E", initials: "SO", folderId: "1ExtUJGposXvT0tXZTyyWg_jfkRejQw2e", searchQuery: "Soriana retail supermercados México noticias", sectors: ["negocios", "estilo de vida", "general"] },
+  { id: "pfizer", name: "Pfizer México", industry: "Farmacéutica", color: "#4A90D9", initials: "PF", folderId: "1Z0iOscR22coaCxWLHNlGFMFUb6GLES69", borradoresFolderId: "1g-JTIM5fqw298V8ho0MqQXCJvkhElKLH", searchQuery: "Pfizer México farmacéutica salud noticias", sectors: ["salud", "negocios", "general"] },
+  { id: "prudence", name: "Condones Prudence", industry: "Salud Sexual", color: "#D62B7C", initials: "PR", folderId: "1VJyRHA5VHyb9Ea6-kK9Iob0ZzQpsiWu0", borradoresFolderId: "1LlhMGdk4LArjCEZGQrNUE-bTcDA-35qq", searchQuery: "salud sexual México condones planificación familiar noticias", sectors: ["salud", "estilo de vida", "general"] },
+  { id: "soriana", name: "Organización Soriana", industry: "Retail", color: "#C8102E", initials: "SO", folderId: "1ExtUJGposXvT0tXZTyyWg_jfkRejQw2e", borradoresFolderId: "1roYSOiT1J8NH28RDb0KPppln16luSfuI", searchQuery: "Soriana retail supermercados México noticias", sectors: ["negocios", "estilo de vida", "general"] },
 ];
 
 const ACTIONS = [
@@ -36,43 +34,29 @@ const MEMORY_TYPES = {
 // ── API FUNCTIONS ─────────────────────────────────────────────────────────────
 
 async function searchGemini(query) {
-  if (!GEMINI_API_KEY) return null;
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ contents: [{ parts: [{ text: `Eres un asistente de investigación para una agencia de relaciones públicas en México. Busca y resume las noticias más recientes sobre: ${query}. Responde en español con TENDENCIAS DEL SECTOR y OPORTUNIDADES DE PR. Máximo 300 palabras.` }] }], generationConfig: { maxOutputTokens: 500, temperature: 0.3 } }) }
-    );
-    if (res.status === 429) { console.warn("Gemini rate limit"); return null; }
+    const res = await fetch("/api/gemini", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query }) });
     if (!res.ok) return null;
     const data = await res.json();
-    return data.candidates?.[0]?.content?.parts?.[0]?.text || null;
-  } catch (e) { return null; }
+    return data.text || null;
+  } catch { return null; }
 }
 
 async function fetchInboxAlerts() {
   try {
-    const res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${INBOX_SHEET_ID}/values/Inbox%20General?key=${GOOGLE_API_KEY}`);
+    const res = await fetch("/api/inbox", { method: "POST", headers: { "Content-Type": "application/json" } });
+    if (!res.ok) return [];
     const data = await res.json();
-    const rows = data.values || [];
-    if (rows.length < 2) return [];
-    const h = rows[0].map(x => x.toLowerCase());
-    return rows.slice(1).slice(-50).reverse().map(r => ({
-      cliente: r[h.indexOf("cliente")] || "",
-      fecha: r[h.indexOf("fecha")] || "",
-      fuente: r[h.indexOf("fuente")] || "",
-      asunto: r[h.indexOf("asunto")] || "",
-      resumen: r[h.indexOf("resumen")] || "",
-      tipo: r[h.indexOf("tipo")] || "",
-    }));
+    return data.rows || [];
   } catch { return []; }
 }
 
-async function createGoogleDoc({ clientId, clientName, title, content, tipo, fecha }) {
+async function createGoogleDoc({ clientId, clientName, title, content, tipo, fecha, folderId }) {
   try {
     const res = await fetch("/api/drive-doc", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ clientId, clientName, title, content, tipo, fecha })
+      body: JSON.stringify({ clientId, clientName, title, content, tipo, fecha, folderId })
     });
     if (!res.ok) return null;
     const data = await res.json();
@@ -131,7 +115,7 @@ async function loadClientContext(folderId) {
   return results;
 }
 
-function buildSystemPrompt(client, driveFiles, newsContext, journalists) {
+function buildContextBlock(driveFiles, newsContext, journalists) {
   const files = driveFiles.length > 0 ? `\n\nARCHIVOS DEL CLIENTE EN DRIVE:\n` + driveFiles.map(f => `\n--- ${f.name} ---\n${f.content}`).join("\n") : "\n\n(Sin archivos en Drive aún.)";
   const news = newsContext ? `\n\nNOTICIAS DEL SECTOR:\n${newsContext}` : "";
   let jCtx = "";
@@ -141,7 +125,7 @@ function buildSystemPrompt(client, driveFiles, newsContext, journalists) {
     jCtx = `\n\nBASE DE PERIODISTAS (${journalists.length} contactos):\n`;
     Object.entries(byMedio).slice(0, 30).forEach(([m, js]) => { jCtx += `\n${m}:\n`; js.forEach(j => { jCtx += `  · ${j.nombre} | ${j.cargo}`; if (j.correo) jCtx += ` | ${j.correo}`; jCtx += "\n"; }); });
   }
-  return `Eres Lupita, agente de Relaciones Públicas para la agencia Neuma.\n\nCLIENTE: ${client.name} (${client.industry})\n${files}${news}${jCtx}\n\nInstrucciones: Escribe siempre en español. Usa los archivos de Drive como base. La base de periodistas siempre está disponible — úsala directamente. Nunca inventes información. Respeta regulaciones sanitarias (COFEPRIS).`;
+  return `${files}${news}${jCtx}`;
 }
 
 function detectMemoryType(content, actionTipo) {
@@ -215,7 +199,7 @@ function MessageBubble({ msg }) {
   );
 }
 
-function MemoryBanner({ type, clientId, clientName, content, onDismiss }) {
+function MemoryBanner({ type, clientId, clientName, borradoresFolderId, content, onDismiss }) {
   const [creating, setCreating] = useState(false);
   const [docId, setDocId] = useState(null);
   const [error, setError] = useState(false);
@@ -228,7 +212,7 @@ function MemoryBanner({ type, clientId, clientName, content, onDismiss }) {
     if (!title.trim()) return;
     setCreating(true);
     setError(false);
-    const id = await createGoogleDoc({ clientId, clientName, title, content, tipo: memConfig.tipo, fecha });
+    const id = await createGoogleDoc({ clientId, clientName, title, content, tipo: memConfig.tipo, fecha, folderId: borradoresFolderId });
     setCreating(false);
     if (id) {
       setDocId(id);
@@ -450,7 +434,7 @@ export default function LupitaApp() {
       setDriveFiles(files); setNewsContext(news); setJournalists(jList);
       setJournalistsStatus(`${jList.length} periodistas relevantes`);
       setDriveStatus(files.length > 0 ? `${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Noticias" : "sin noticias"}` : `Sin archivos · ${news ? "🌐 Noticias" : ""}`);
-      systemPromptRef.current = buildSystemPrompt(client, files, news, jList);
+      systemPromptRef.current = buildContextBlock(files, news, jList);
       const newsLine = news ? "\n\n🌐 **Noticias del sector cargadas.**" : "";
       const fileNames = files.map(f => `· ${f.name}`).join("\n");
       setMessages([{ role: "assistant", content: files.length > 0 ? `¡Hola! Soy Lupita, lista para **${client.name}**.\n\nArchivos de Drive:\n${fileNames}${newsLine}\n\n¿Qué necesitas generar?` : `¡Hola! Soy Lupita, lista para **${client.name}**.${newsLine}\n\n¿Qué necesitas generar?` }]);
@@ -468,7 +452,7 @@ export default function LupitaApp() {
     const newMsgs = [...messages, { role: "user", content: userText }];
     setMessages(newMsgs); setLoading(true); setMemoryBanner(null);
     try {
-      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 1500, system: systemPromptRef.current, messages: newMsgs.map(m => ({ role: m.role, content: m.content })) }) });
+      const res = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model: "claude-sonnet-5", max_tokens: 1500, clientId: activeClient?.id, clientName: activeClient?.name, industry: activeClient?.industry, contextBlock: systemPromptRef.current, messages: newMsgs.map(m => ({ role: m.role, content: m.content })) }) });
       const data = await res.json();
       const reply = data.content?.map(b => b.text).join("") || "Error al obtener respuesta.";
       setMessages(prev => [...prev, { role: "assistant", content: reply }]);
@@ -491,7 +475,7 @@ export default function LupitaApp() {
       const [files, news, jList] = await Promise.all([loadClientContext(activeClient.folderId), searchGemini(activeClient.searchQuery), fetchJournalists(activeClient.sectors || [activeClient.industry])]);
       setDriveFiles(files); setNewsContext(news); setJournalists(jList);
       setJournalistsStatus(`${jList.length} periodistas relevantes`);
-      systemPromptRef.current = buildSystemPrompt(activeClient, files, news, jList);
+      systemPromptRef.current = buildContextBlock(files, news, jList);
       setDriveStatus(`${files.length} archivo${files.length > 1 ? "s" : ""} · ${news ? "🌐 Actualizadas" : "sin noticias"}`);
     } catch { setDriveStatus("Error"); }
     setLoadingDrive(false);
@@ -667,6 +651,7 @@ export default function LupitaApp() {
               type={memoryBanner.type}
               clientId={activeClient?.id}
               clientName={activeClient?.name}
+              borradoresFolderId={activeClient?.borradoresFolderId}
               content={memoryBanner.content}
               onDismiss={() => setMemoryBanner(null)}
             />

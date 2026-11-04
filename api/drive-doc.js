@@ -13,16 +13,19 @@ export default async function handler(req, res) {
   const webhookUrl = process.env.APPS_SCRIPT_URL;
   if (!webhookUrl) return res.status(500).json({ error: "webhook_not_configured" });
 
-  const { clientId, clientName, title, content, tipo, fecha } = req.body || {};
+  const { clientId, clientName, title, content, tipo, fecha, folderId } = req.body || {};
   if (!clientId || !title || !content) {
     return res.status(400).json({ error: "missing_fields" });
+  }
+  if (!folderId) {
+    return res.status(400).json({ error: "missing_folder_id" });
   }
 
   try {
     const response = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "createDoc", clientId, clientName, title, content, tipo, fecha, token: process.env.APPS_SCRIPT_TOKEN }),
+      body: JSON.stringify({ action: "createDoc", clientId, clientName, title, content, tipo, fecha, folderId, token: process.env.APPS_SCRIPT_TOKEN }),
     });
 
     if (!response.ok) return res.status(502).json({ error: "webhook_failed" });

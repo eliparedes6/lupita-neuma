@@ -3,5 +3,10 @@
     { "source": "/auth/callback", "destination": "/api/auth/callback" },
     { "source": "/auth/logout", "destination": "/api/auth/logout" },
     { "source": "/api/chat", "destination": "/api/chat" }
-  ]
+  ],
+  "functions": {
+    "api/chat.js": {
+      "includeFiles": "prompts/**"
+    }
+  }
 }
