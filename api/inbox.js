@@ -20,16 +20,10 @@ export default async function handler(req, res) {
       body: JSON.stringify({ action: "getInbox", token: process.env.APPS_SCRIPT_TOKEN }),
     });
 
-    if (!response.ok) {
-      console.error("inbox: webhook_failed, status=" + response.status);
-      return res.status(502).json({ error: "webhook_failed", debugStatus: response.status });
-    }
+    if (!response.ok) return res.status(502).json({ error: "webhook_failed" });
 
     const data = await response.json();
-    if (data.error) {
-      console.error("inbox: apps script error:", data.error);
-      return res.status(502).json({ error: data.error });
-    }
+    if (data.error) return res.status(502).json({ error: data.error });
     return res.status(200).json({ rows: data.rows || [] });
   } catch (err) {
     console.error("inbox error:", err);
